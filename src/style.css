@@ -49,12 +49,6 @@
   @media (max-width: 1024px) {
     font-size: 24px;
   }
-
-  /* 휴대폰: 과도하게 큰 rem/em 기준을 낮춰 한 화면에 맞춤 */
-  @media (max-width: 640px) {
-    font-size: 17px;
-    line-height: 1.5;
-  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -88,19 +82,11 @@
   }
 }
 
-html {
-  overflow-x: clip;
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
-}
-
 body {
   margin: 0;
   min-height: 100svh;
-  min-height: 100dvh;
   position: relative;
   isolation: isolate;
-  overflow-x: clip;
   /* 불투명 배경이 있으면 z-index 음수 ::before 가 그 뒤로 가려져 이미지가 안 보임 */
   background: transparent;
 }
@@ -272,11 +258,7 @@ code {
 #app.circuit-app {
   text-align: left;
   padding: 0;
-  padding-left: env(safe-area-inset-left, 0px);
-  padding-right: env(safe-area-inset-right, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
   width: 100%;
-  max-width: 100%;
   box-sizing: border-box;
   animation: circuit-fade-in 0.45s ease both;
   position: relative;
@@ -306,7 +288,6 @@ code {
 .circuit-global-bar {
   flex-shrink: 0;
   padding: 10px 14px;
-  padding-top: max(10px, env(safe-area-inset-top, 0px));
   border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(13, 148, 136, 0.06), transparent);
 }
@@ -1611,7 +1592,7 @@ code {
 
 .circuit-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
+  grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.95fr);
   gap: 24px;
   align-items: stretch;
   padding: 0 16px;
@@ -3237,248 +3218,5 @@ code {
   &::after {
     right: 0;
     border-right-color: var(--border);
-  }
-}
-
-/* ========== 휴대폰(좁은 뷰포트): Galaxy / iPhone 등 ========== */
-@media (max-width: 640px) {
-  h1 {
-    font-size: clamp(28px, 9vw, 40px);
-    margin: 16px 0;
-    letter-spacing: -0.04em;
-  }
-
-  h2 {
-    font-size: 1.25rem;
-  }
-
-  .circuit-title {
-    font-size: clamp(2.5rem, 11vw, 3.75rem);
-    line-height: 1.12;
-    margin: 0 0 10px;
-  }
-
-  .cover-brand {
-    margin-top: 24px;
-    margin-bottom: 28px;
-    padding-block: 20px;
-  }
-
-  .cover-brand__eyebrow {
-    font-size: 0.85rem;
-    letter-spacing: 0.12em;
-    margin-bottom: 12px;
-  }
-
-  .circuit-page--cover {
-    padding: 20px 10px 36px;
-  }
-
-  .cover-card {
-    padding: 20px 14px 18px;
-  }
-
-  .cover-card .btn--lg {
-    font-size: 1.15rem;
-    padding: 16px 18px;
-  }
-
-  .subject-btn {
-    font-size: clamp(1.05rem, 4.2vw, 1.35rem);
-    padding-block: 16px;
-  }
-
-  .teacher-gate .circuit-subtitle {
-    font-size: clamp(1.35rem, 5vw, 1.75rem);
-    line-height: 1.2;
-  }
-
-  .teacher-gate .teacher-gate__lead.teacher-gate__lead--small {
-    font-size: 1rem;
-  }
-
-  .teacher-gate .field__label {
-    font-size: 1.05rem;
-  }
-
-  .teacher-dash__head {
-    margin-bottom: 24px;
-  }
-
-  .teacher-dash__list-head {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
-
-  .teacher-dash__filters {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .teacher-dash__filter {
-    min-width: 0;
-    max-width: none;
-    width: 100%;
-  }
-
-  .teacher-dash__bulk {
-    justify-content: flex-start;
-  }
-
-  .teacher-dash__list {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .teacher-table {
-    font-size: 0.95rem;
-  }
-
-  .teacher-detail__name {
-    font-size: 1.35rem;
-    padding: 10px 14px;
-  }
-
-  .circuit-page--step .circuit-sidebar,
-  .circuit-page--report .circuit-sidebar {
-    margin: 0 8px 12px;
-    padding: 10px 12px;
-    font-size: 0.95rem;
-  }
-
-  .circuit-sidebar__date {
-    white-space: normal;
-    font-size: 0.9rem;
-  }
-
-  .circuit-progress {
-    padding: 10px 6px 8px;
-    gap: 2px;
-  }
-
-  .circuit-progress__dot {
-    width: 44px;
-    height: 44px;
-    font-size: 16px;
-  }
-
-  .circuit-progress__label {
-    font-size: 0.78rem;
-    white-space: normal;
-    text-align: center;
-    line-height: 1.2;
-  }
-
-  .circuit-columns {
-    padding: 0 8px;
-    gap: 14px;
-  }
-
-  .panel--main {
-    padding: 16px 12px 18px;
-  }
-
-  .panel--main .section-title {
-    font-size: 1.35rem;
-    margin: 12px 0 10px;
-  }
-
-  .step-title {
-    font-size: clamp(1.35rem, 5vw, 1.75rem);
-  }
-
-  .step-lede {
-    font-size: 1rem;
-    margin-bottom: 16px;
-  }
-
-  .circuit-page--step .btn,
-  .circuit-page--report .btn {
-    font-size: 1.05rem;
-  }
-
-  .circuit-page--step .btn--lg {
-    padding: 16px 18px;
-    font-size: 1.05rem;
-  }
-
-  .circuit-page--step .circuit-page-nav__btn,
-  .circuit-page--report .circuit-page-nav__btn {
-    padding: 16px 14px !important;
-    font-size: 1.05rem !important;
-  }
-
-  .circuit-page--step .chat-input-row .btn--primary {
-    font-size: 1.05rem;
-    width: 100%;
-  }
-
-  .circuit-global-bar__btn {
-    font-size: 0.95rem;
-    padding: 10px 14px;
-  }
-
-  .ai-chat {
-    max-height: min(62dvh, calc(100dvh - 200px));
-    padding: 12px 12px 12px;
-  }
-
-  .chat-input-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-
-  .chat-input {
-    font-size: 16px;
-    width: 100%;
-  }
-
-  .input {
-    font-size: 16px;
-  }
-
-  .materials-name {
-    font-size: 1rem;
-  }
-
-  .materials-qty {
-    width: 100%;
-    max-width: 120px;
-    font-size: 1.05rem;
-  }
-
-  .materials-item {
-    flex-wrap: wrap;
-  }
-
-  .file-drop__inner {
-    padding: 20px 14px;
-    min-height: 160px;
-  }
-
-  .file-drop__title {
-    font-size: 1.1rem;
-  }
-
-  .file-drop__hint {
-    font-size: 0.95rem;
-  }
-
-  .circuit-page--report .restart-btn {
-    font-size: 1.05rem;
-    padding: 16px 18px;
-  }
-
-  .report-header {
-    padding: 20px 10px 18px;
-  }
-
-  .report-header__title {
-    font-size: clamp(1.25rem, 5vw, 1.6rem);
-  }
-
-  .report-header__sub {
-    font-size: 1rem;
   }
 }

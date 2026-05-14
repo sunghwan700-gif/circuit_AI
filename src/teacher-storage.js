@@ -43,7 +43,19 @@ function getTeacherApiSessionToken() {
 
 function getApiBase() {
   const u = import.meta.env.VITE_SUBMISSIONS_API_URL
-  return typeof u === 'string' && u.trim() ? u.replace(/\/$/, '') : ''
+  if (typeof u === 'string' && u.trim()) return u.replace(/\/$/, '')
+  // Netlify 등: 별도 URL 없이 같은 사이트의 Functions로 동기화
+  if (import.meta.env.VITE_SUBMISSIONS_SAME_ORIGIN === 'true') {
+    if (typeof window !== 'undefined' && window.location?.origin) {
+      return window.location.origin.replace(/\/$/, '')
+    }
+  }
+  return ''
+}
+
+/** 교사 로그인·제출 API 베이스 (main.js 등에서 사용) */
+export function getSubmissionsApiBase() {
+  return getApiBase()
 }
 
 function getApiToken() {

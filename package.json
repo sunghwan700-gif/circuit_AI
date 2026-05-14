@@ -5,14 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:netlify": "cross-env VITE_SUBMISSIONS_SAME_ORIGIN=true npx -y netlify-cli@21.6.0 dev",
     "build": "vite build",
     "preview": "vite preview",
     "sync-server": "node server/submissions-server.mjs"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "vite": "^8.0.1"
   },
   "dependencies": {
+    "@netlify/blobs": "^10.1.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "jszip": "^3.10.1"

@@ -11,6 +11,7 @@ import {
   getLocalFeedbackDoneTimestamp,
   getTeacherAuth,
   initTeacherStorage,
+  getSubmissionsApiBase,
   isRemoteSubmissionsEnabled,
   loadSubmissions,
   removeSubmission,
@@ -546,11 +547,6 @@ const ADMIN_PASSWORD =
   import.meta.env.VITE_TEACHER_PASSWORD.trim()
     ? import.meta.env.VITE_TEACHER_PASSWORD.trim()
     : 'ys6905')
-
-function getSubmissionsApiBase() {
-  const u = import.meta.env.VITE_SUBMISSIONS_API_URL
-  return typeof u === 'string' && u.trim() ? u.replace(/\/$/, '') : ''
-}
 
 async function teacherLoginViaServer(id, password) {
   const base = getSubmissionsApiBase()

@@ -410,6 +410,96 @@ async function handleStatus(store, event, id) {
   })
 }
 
+/**
+ * 리다이렉트 후 쿼리(?mode=list 등)가 누락되는 경우가 있어 path·rawUrl·헤더에서 라우트를 복구합니다.
+ * @param {any} event
+ * @returns {{ mode: string, rid: string }}
+ */
+function parseRoute(event) {
+  const qs = event.queryStringParameters || {}
+  let mode = String(qs.mode || '')
+  let rid = String(qs.rid || '').trim()
+  if (
+    mode === 'list' ||
+    mode === 'auth' ||
+    (mode === 'status' && rid) ||
+    (mode === 'record' && rid)
+  ) {
+    return { mode, rid }
+  }
+
+  const mqs = event.multiValueQueryStringParameters
+  if (mqs?.mode?.[0]) {
+    mode = String(mqs.mode[0])
+    rid = String(mqs.rid?.[0] || '').trim()
+    if (
+      mode === 'list' ||
+      mode === 'auth' ||
+      (mode === 'status' && rid) ||
+      (mode === 'record' && rid)
+    ) {
+      return { mode, rid }
+    }
+  }
+
+  const headers = event.headers || {}
+  const hget = (/** @type {string} */ a, /** @type {string} */ b) =>
+    headers[a] || headers[b] || ''
+  const forwarded =
+    hget('x-forwarded-uri', 'X-Forwarded-Uri') ||
+    hget('x-netlify-original-uri', 'X-Netlify-Original-Uri') ||
+    hget('x-invoke-path', 'X-Invoke-Path') ||
+    ''
+
+  const rawUrl = typeof event.rawUrl === 'string' ? event.rawUrl : ''
+  const candidatePaths = []
+  if (forwarded) candidatePaths.push(String(forwarded).split('?')[0])
+  const rcPath = event.requestContext?.http?.path || event.requestContext?.path
+  if (rcPath) candidatePaths.push(String(rcPath).split('?')[0])
+  if (event.path) candidatePaths.push(String(event.path).split('?')[0])
+  if (rawUrl) {
+    try {
+      const u = new URL(rawUrl)
+      const qm = u.searchParams.get('mode')
+      const qr = u.searchParams.get('rid') || ''
+      if (qm) return { mode: String(qm), rid: String(qr).trim() }
+      candidatePaths.push(u.pathname)
+    } catch {
+      // ignore
+    }
+  }
+
+  for (const rawPath of candidatePaths) {
+    const p = String(rawPath || '').split('?')[0]
+    if (!p) continue
+
+    if (p === '/api/submissions' || p === '/api/submissions/') return { mode: 'list', rid: '' }
+    if (p === '/api/auth/teacher/login') return { mode: 'auth', rid: '' }
+    if (p === '/.netlify/functions/submissions-sync' || p === '/.netlify/functions/submissions-sync/')
+      return { mode: 'list', rid: '' }
+
+    const st = p.match(/^\/api\/submissions\/([^/]+)\/status\/?$/i)
+    if (st) {
+      try {
+        return { mode: 'status', rid: decodeURIComponent(st[1]) }
+      } catch {
+        return { mode: 'status', rid: st[1] }
+      }
+    }
+
+    const rec = p.match(/^\/api\/submissions\/([^/]+)\/?$/i)
+    if (rec) {
+      try {
+        return { mode: 'record', rid: decodeURIComponent(rec[1]) }
+      } catch {
+        return { mode: 'record', rid: rec[1] }
+      }
+    }
+  }
+
+  return { mode: '', rid: '' }
+}
+
 /** @param {any} event */
 function openStore(event) {
   try {
@@ -442,9 +532,7 @@ export const handler = async (event, context) => {
     )
   }
 
-  const qs = event.queryStringParameters || {}
-  const mode = String(qs.mode || '')
-  const rid = String(qs.rid || '').trim()
+  const { mode, rid } = parseRoute(event)
 
   try {
     if (mode === 'auth') return await handleAuthLogin(store, event)

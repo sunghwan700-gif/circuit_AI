@@ -98,11 +98,40 @@ export function isRemoteSubmissionsEnabled() {
   return Boolean(getApiBase())
 }
 
+/** Netlify 리다이렉트에서 ?mode= 가 빠져 404 나는 경우를 줄이기 위해 동일 출처일 때 쿼리를 붙입니다. */
+function useNetlifySubmissionRouteHints() {
+  return import.meta.env.VITE_SUBMISSIONS_SAME_ORIGIN === 'true'
+}
+
+/** @param {string} base */
+function apiListSubmissionsUrl(base) {
+  const b = String(base || '').replace(/\/$/, '')
+  return useNetlifySubmissionRouteHints() ? `${b}/api/submissions?mode=list` : `${b}/api/submissions`
+}
+
+/** @param {string} base @param {string} id */
+function apiSubmissionStatusUrl(base, id) {
+  const b = String(base || '').replace(/\/$/, '')
+  const p = `${b}/api/submissions/${encodeURIComponent(id)}/status`
+  return useNetlifySubmissionRouteHints()
+    ? `${p}?mode=status&rid=${encodeURIComponent(id)}`
+    : p
+}
+
+/** @param {string} base @param {string} id */
+function apiSubmissionRecordUrl(base, id) {
+  const b = String(base || '').replace(/\/$/, '')
+  const p = `${b}/api/submissions/${encodeURIComponent(id)}`
+  return useNetlifySubmissionRouteHints()
+    ? `${p}?mode=record&rid=${encodeURIComponent(id)}`
+    : p
+}
+
 /** @returns {Promise<SubmissionRecord[]>} */
 async function fetchRemoteList() {
   const base = getApiBase()
   if (!base) throw new Error('no API')
-  const r = await fetch(`${base}/api/submissions`, { headers: authHeadersGet() })
+  const r = await fetch(apiListSubmissionsUrl(base), { headers: authHeadersGet() })
   if (!r.ok) throw new Error(`GET ${r.status}`)
   const data = await r.json()
   return Array.isArray(data) ? data : []
@@ -114,7 +143,7 @@ export async function fetchRemoteFeedbackStatus(id) {
   if (!base) return null
   const sid = String(id || '').trim()
   if (!sid) return null
-  const r = await fetch(`${base}/api/submissions/${encodeURIComponent(sid)}/status`, {
+  const r = await fetch(apiSubmissionStatusUrl(base, sid), {
     headers: authHeadersGet(),
   })
   if (!r.ok) return null
@@ -133,7 +162,7 @@ export async function fetchRemoteFeedbackStatus(id) {
 async function postRemoteUpsert(record) {
   const base = getApiBase()
   if (!base) throw new Error('no API')
-  const r = await fetch(`${base}/api/submissions`, {
+  const r = await fetch(apiListSubmissionsUrl(base), {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify(record),
@@ -152,7 +181,7 @@ async function postRemoteUpsert(record) {
 async function patchRemoteRecord(id, patch, version) {
   const base = getApiBase()
   if (!base) throw new Error('no API')
-  const r = await fetch(`${base}/api/submissions/${encodeURIComponent(id)}`, {
+  const r = await fetch(apiSubmissionRecordUrl(base, id), {
     method: 'PATCH',
     headers: { ...authHeaders(), ...ifMatchHeader(version) },
     body: JSON.stringify(patch),
@@ -172,7 +201,7 @@ async function patchRemoteRecord(id, patch, version) {
 async function deleteRemoteRecord(id) {
   const base = getApiBase()
   if (!base) return
-  const r = await fetch(`${base}/api/submissions/${encodeURIComponent(id)}`, {
+  const r = await fetch(apiSubmissionRecordUrl(base, id), {
     method: 'DELETE',
     headers: authHeadersGet(),
   })

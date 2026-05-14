@@ -551,7 +551,11 @@ const ADMIN_PASSWORD =
 async function teacherLoginViaServer(id, password) {
   const base = getSubmissionsApiBase()
   if (!base) return null
-  const r = await fetch(`${base}/api/auth/teacher/login`, {
+  const loginUrl =
+    import.meta.env.VITE_SUBMISSIONS_SAME_ORIGIN === 'true'
+      ? `${base}/api/auth/teacher/login?mode=auth`
+      : `${base}/api/auth/teacher/login`
+  const r = await fetch(loginUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify({ id, password }),

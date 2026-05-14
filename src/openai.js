@@ -10,12 +10,15 @@ export function isOpenAiProxyAvailable() {
  * @param {{ role: string, content: string }[]} messages
  * @param {string} contextDescription
  * @param {{ dataUrl: string, label?: string }[]=} images
+ * @param {{ skipRefine?: boolean }=} options 서버의 2차 보강(refine) 호출을 건너뜁니다(이미지 없는 짧은 질문 등).
  */
-export async function sendOpenAiChat(messages, contextDescription, images) {
+export async function sendOpenAiChat(messages, contextDescription, images, options) {
+  const body = { messages, contextDescription, images }
+  if (options?.skipRefine) body.skipRefine = true
   const res = await fetch('/api/openai/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, contextDescription, images }),
+    body: JSON.stringify(body),
   })
 
   const raw = await res.text()

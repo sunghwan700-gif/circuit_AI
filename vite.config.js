@@ -27,7 +27,8 @@ export default defineConfig(({ mode }) => {
               return
             }
 
-            const { messages, contextDescription, images } = body
+            const { messages, contextDescription, images, skipRefine: skipRefineBody } =
+              body
             // Gemini(구글 AI Studio) 키를 사용합니다.
             // - 권장: GEMINI_API_KEY 또는 GOOGLE_API_KEY
             // - (호환) 기존 OPENAI_API_KEY에 넣어둔 경우도 fallback
@@ -71,23 +72,29 @@ export default defineConfig(({ mode }) => {
             const modelCandidates = Array.from(
               new Set([normalizeModel(primaryModel), ...fallbackModels]),
             )
+            const imageList = Array.isArray(images) ? images : []
+            const hasImages = imageList.length > 0
             const systemContent = `당신은 전기 실습(회로·승강기·철도전기신호 등)을 돕는 조교입니다. 항상 한국어로 답합니다.
 
-목표: 사용자의 질문에 대해 정밀하고 세밀하며 실무적으로 도움이 되는 분석을 제공하세요.
+공통 원칙(가장 중요):
+- 환각 금지: 이미지에서 읽지 못한 단자 번호·배선·표기·측정값을 '확인했다'처럼 쓰지 마세요. 없는 사실을 만들어내지 마세요.
+- 근거 분리: 확인된 사실 / 추정(가정) / 모름 을 구분해 말하세요.
+- 자료가 없으면 짧게: 이번 요청에 분석용 회로도·실습 사진이 첨부되지 않았거나 대화에 구체적 내용이 없으면, 일반 안전 원칙과 '무엇을 올리면 다음에 구체적으로 도울 수 있는지'만 2~6문장으로 안내하세요. 구체 회로 진단을 꾸며 내지 마세요.
+- 불확실하면 질문: 핵심 정보가 부족하면 결론을 길게 내리지 말고 확인 질문 1~3개만 하세요.
+- 안전 우선: 감전·단락·과열 가능성이 거론되면 전원 차단을 먼저 말하세요.
 
-필수 원칙:
-- 근거 중심: 이미지/대화/현재 단계 맥락에서 확인되는 사실과, 추정(가정)을 분리해 말합니다.
-- 불확실하면 질문: 핵심 정보가 부족하면 바로 결론 내리지 말고, 먼저 1~3개의 짧은 확인 질문을 합니다.
-- 안전 우선: 감전/단락/화재 위험이 있으면 먼저 전원 차단, 점검 순서, 주의사항을 제시합니다.
-- 멀티모달: 첨부된 회로도/실습 사진이 있으면 내용을 직접 읽고, 부품/단자/배선/표기(예: NO/NC, COM, A1/A2, 13-14 등)를 근거로 설명합니다.
-- 실습 맥락 적합: 기능사 실습 수준에서 '왜 그런지'와 '어떻게 점검/수정하는지'를 단계적으로 안내합니다.
+${
+              hasImages
+                ? `이번 요청에는 이미지가 포함되어 있습니다. 이미지에서 실제로 보이는 텍스트·단자·배선·표기를 근거로 정밀히 설명하세요.
 
-답변 형식(가능한 한 유지):
-1) 결론 요약 (2~4문장)
-2) 관찰/근거 (이미지·대화·맥락에서 확인한 점)
-3) 분석 (원인 후보를 우선순위로, 각 후보의 판단 근거 포함)
-4) 점검/조치 순서 (체크리스트 형태, 안전 포함)
-5) 추가로 확인할 질문 (필요 시)
+답변 형식(근거가 충분할 때 위주로 유지, 근거가 부족하면 짧게 줄여도 됨):
+1) 결론 요약
+2) 관찰/근거 (이미지·대화에서 확인한 점만)
+3) 분석 (원인 후보는 근거가 있을 때만, 우선순위)
+4) 점검/조치 순서 (체크리스트, 안전 포함)
+5) 추가 확인 질문 (필요 시)`
+                : `이번 요청에는 분석용 이미지가 첨부되어 있지 않습니다. 위 '자료가 없으면 짧게' 규칙을 따르세요. 장문의 가상 점검 결과를 쓰지 마세요.`
+            }
 
 현재 실습 단계 맥락: ${contextDescription || ''}`
 
@@ -98,7 +105,6 @@ export default defineConfig(({ mode }) => {
               }))
 
               // 이미지(데이터 URL)를 마지막 user turn에 첨부 (Gemini 멀티모달)
-              const imageList = Array.isArray(images) ? images : []
               if (imageList.length) {
                 const toInlinePart = (img) => {
                   const dataUrl = String(img?.dataUrl || '')
@@ -288,21 +294,31 @@ export default defineConfig(({ mode }) => {
                 finishReason = next.finishReason || ''
               }
 
-              // 고정밀 모드(비용 증가): 1회 자체 검토/보강(refine)로 누락/모호함/안전/근거를 자동 보완
+              // 고정밀 모드(비용 증가): 1회 자체 검토/보강(refine). 이미지 없음·JSON 작업에서는 생략.
               const refineEnabled =
                 String(env.GEMINI_DISABLE_REFINE || '').trim() !== '1' &&
                 String(env.GEMINI_DISABLE_REFINE || '').trim().toLowerCase() !== 'true'
-              if (refineEnabled && out && out.trim()) {
+              const isReportJsonJob = /최종 보고서|SWOT|종합 피드백/i.test(
+                String(contextDescription || ''),
+              )
+              // refine은 답을 길게 키워 환각을 부추길 수 있음: JSON 산출물·이미지 없음·클라이언트 요청 시 생략
+              const refineShouldRun =
+                refineEnabled &&
+                out &&
+                out.trim() &&
+                !isReportJsonJob &&
+                skipRefineBody !== true &&
+                hasImages
+              if (refineShouldRun) {
                 try {
-                  const refinePrompt = `아래는 너의 '초안 답변'이다. 같은 질문/이미지 맥락을 유지하면서 더 정밀하고 세밀하고 완성도 높게 최종 답변을 다시 작성해라.
+                  const refinePrompt = `아래는 너의 '초안 답변'이다. 같은 질문/이미지 맥락을 유지하면서 최종 답변을 다시 작성해라.
 
-필수 보강:
-- 근거(이미지/대화/맥락에서 확인되는 포인트)를 더 구체적으로
-- 가능한 원인 후보를 우선순위로 정리하고, 각 후보의 판별 방법(어떤 단자/표기/동작을 보면 되는지)을 포함
-- 안전(전원 차단, 단락/감전/과열 위험) 관련 경고와 점검 순서를 체크리스트로
-- 핵심 정보가 부족하면 '추측' 대신 확인 질문 1~3개
+중요:
+- 초안이 '근거 부족', '추가 사진 필요', 짧은 확인 질문 위주라면: 길이를 늘리지 말고 문장만 명확하게 다듬어라. 새로운 단자번호·배선·측정값을 추가하지 마라.
+- 이미지에서 보이지 않는 사실을 보강하지 마라.
+- 근거가 충분할 때만 아래 형식을 유지하고, 부족하면 2~6문장으로 끝내도 된다.
 
-형식은 다음을 유지:
+가능하면 유지할 형식:
 1) 결론 요약
 2) 관찰/근거
 3) 분석(원인 후보 우선순위)

@@ -318,7 +318,7 @@ function tryParseJsonLoose(s) {
   }
 }
 
-async function generateAiReportInsights() {
+async function generateAiReportInsights(opts = {}) {
   if (!isOpenAiProxyAvailable()) return null
 
   /** @type {{ dataUrl: string, label?: string }[]} */
@@ -348,18 +348,42 @@ async function generateAiReportInsights() {
   }
 
   const transcript = buildChatTranscriptForReport()
-  const prompt = `너는 전기 실습을 돕는 조교야. 아래 대화(그리고 첨부 이미지들)를 바탕으로 보고서용 결과를 생성해줘.
+  const practiceBlock = buildPracticeContextForAi()
+  const sw = opts.swot
+  const swotLine = (v) => {
+    const s = String(v ?? '').replace(/\s+/g, ' ').trim()
+    return !s || s === '—' ? '(없음)' : s
+  }
+  const swotCtx =
+    sw &&
+    [sw.s, sw.w, sw.o, sw.t].some((x) => {
+      const t = String(x ?? '').replace(/\s+/g, ' ').trim()
+      return t && t !== '—'
+    })
+      ? `학습자가 화면에 적어 둔 SWOT(확인된 내용만 반영, 빈 칸은 없음):
+- S: ${swotLine(sw.s)}
+- W: ${swotLine(sw.w)}
+- O: ${swotLine(sw.o)}
+- T: ${swotLine(sw.t)}`
+      : ''
+
+  const prompt = `너는 전기 실습을 돕는 조교야. 아래 대화, 이미지(있으면), 자기평가·SWOT 요약을 바탕으로 보고서용 결과를 생성해줘.
 
 요구사항:
 - 반드시 JSON만 출력
 - 키는 summary, swot 를 포함
-- summary: 한국어 2~3문장, 실습의 핵심 피드백(강점/개선/안전) 요약
-- swot: { "s": "...", "w": "...", "o": "...", "t": "..." } 각각 한국어로 1줄씩(짧게)
-- 대화에 근거가 없으면 추측하지 말고 "추가 정보 필요"라고 써도 됨
+- summary: 한국어 1~3문장. 확인된 근거가 있을 때만 실습 피드백을 쓰고, 근거가 부족하면 "제공된 자료만으로는 구체 평가가 어렵습니다."로 시작하는 짧은 안내만.
+- swot: { "s": "...", "w": "...", "o": "...", "t": "..." } 각각 한국어 1줄(짧게). 근거가 없으면 각 값을 "추가 자료 필요"로만 채워라. SWOT 항목을 추측으로 채우지 마라.
+- 대화·이미지·자기평가·SWOT 어디에도 없는 단자번호·배선·측정값·고장 단정을 만들지 마라.
+
+엄격 규칙:
+- 자료가 빈약하면(대화가 거의 없고 이미지도 없거나 판독 불가에 자기평가·SWOT도 비어 있음) summary는 한두 문장, swot 네 칸 모두 "추가 자료 필요"로 통일해도 된다.
 
 대화:
 ${transcript || '(대화 없음)'}
-`
+
+${practiceBlock}
+${swotCtx ? `\n${swotCtx}\n` : ''}`
 
   const text = await sendOpenAiChat(
     [{ role: 'user', content: prompt }],
@@ -704,7 +728,7 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
                 </label>
               </div>
               <div class="teacher-dash__bulk" aria-label="제출 관리">
-                <button type="button" class="btn btn--secondary teacher-bulk-toggle">전체 체크</button>
+                <button type="button" class="btn btn--secondary teacher-bulk-toggle">전체 선택</button>
                 <button type="button" class="btn btn--secondary teacher-bulk-delete" disabled>선택 삭제</button>
                 <button type="button" class="btn btn--danger teacher-bulk-delete-all" disabled>전체 삭제</button>
               </div>
@@ -791,7 +815,7 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
       bulkToggleBtn.textContent =
         visibleIds.length > 0 && checkedVisibleCount === visibleIds.length
           ? '전체 해제'
-          : '전체 체크'
+          : '전체 선택'
       bulkToggleBtn.toggleAttribute('disabled', visibleIds.length === 0)
     }
     bulkDeleteBtn?.toggleAttribute('disabled', checkedVisibleCount === 0)
@@ -994,8 +1018,11 @@ SWOT S/W/O/T: ${detail.swot?.s || ''} / ${detail.swot?.w || ''} / ${detail.swot?
       if (!useApi) {
         msg.className = 'info-banner teacher-detail__msg'
         msg.textContent =
-          '개발 서버(OpenAI 프록시)가 없어 모의 초안만 넣습니다. 전기 실습 관점에서 결선·안전·정리를 짧게 언급한 피드백 초안입니다.'
-        ta.value = `[AI 피드백 초안] 전체적으로 실습 기록이 잘 정리되어 있습니다. 릴레이 공통 단자·배선 정리를 한 번 더 점검하면 좋겠습니다.`
+          '개발 서버(OpenAI 프록시)가 없어 짧은 안내만 넣습니다. 실제 초안은 API 연결 후 생성하세요.'
+        ta.value =
+          `[모의 초안] 아래 제출 내용만을 근거로 검토해 주세요. 제출에 없는 배선·단자 상태는 단정하지 않습니다.\n` +
+          `- 강점/보완은 학습자가 적은 SWOT·자기평가에 맞춰 한두 가지씩만 언급\n` +
+          `- 안전: 작업 전 전원 확인·배선 재점검을 한 문장으로 안내`
         return
       }
       aiBtn.disabled = true
@@ -1006,10 +1033,15 @@ SWOT S/W/O/T: ${detail.swot?.s || ''} / ${detail.swot?.w || ''} / ${detail.swot?
           [
             {
               role: 'user',
-              content: `다음 학습자 실습 요약을 바탕으로, 교사가 학생에게 전달할 짧은 피드백 초안(한국어, 4~8문장)을 작성해줘.\n\n${context}`,
+              content:
+                `다음은 학습자 제출에서 확인되는 사실만이다. 제출에 없는 회로 세부·단자·측정값을 지어내지 말고, 확인된 내용만으로 교사가 학생에게 줄 짧은 피드백 초안(한국어, 3~6문장)을 작성해줘.\n\n` +
+                `근거가 매우 적으면 "제출 내용만으로는 구체 피드백이 어렵습니다"로 시작하고, 추가로 필요한 자료를 1~2문장으로만 요청해줘.\n\n` +
+                context,
             },
           ],
           '교사용 개별 피드백 초안',
+          undefined,
+          { skipRefine: true },
         )
         ta.value = draft
         msg.textContent = '초안을 입력란에 넣었습니다. 검토 후 저장하세요.'
@@ -1019,9 +1051,8 @@ SWOT S/W/O/T: ${detail.swot?.s || ''} / ${detail.swot?.w || ''} / ${detail.swot?
           e instanceof Error ? e.message : 'AI 요청에 실패했습니다.'
         // API 오류 시에도 교사가 바로 수정할 수 있도록 모의 초안을 넣는다.
         ta.value =
-          `[AI 피드백 초안(모의)] 전체적으로 실습 기록이 잘 정리되어 있습니다. ` +
-          `배선(단자 체결 상태)과 안전 수칙(전원 차단 확인)을 한 번 더 점검하면 좋겠습니다. ` +
-          `다음 실습에서는 결선 과정 사진/메모를 조금 더 남기면 피드백에 도움이 됩니다.`
+          `[모의 초안] API 오류로 자동 생성에 실패했습니다. 아래는 형식용 문장이며 실제 관찰에 기반하지 않을 수 있습니다.\n` +
+          `제출된 SWOT·자기평가·사진을 다시 확인한 뒤 직접 피드백을 작성해 주세요.`
       } finally {
         aiBtn.disabled = false
       }
@@ -1198,10 +1229,10 @@ function attachPageNav(host, options = {}) {
 }
 
 function mockAiReply(contextDescription) {
-  return `[AI 피드백] 업로드된 이미지를 분석 중입니다... ${contextDescription}에 맞춰 답변해 드릴게요.`
+  return `[모의 응답] 지금은 API에 연결되지 않아 실제 분석을 할 수 없습니다. ${contextDescription} 단계에서는 회로도·실습 사진을 올리고 질문을 구체적으로 적으면 도움이 됩니다.`
 }
 
-function aiInstructionForPage(contextDescription) {
+function aiInstructionForPage(contextDescription, hasImages = true) {
   const subject = String(state.data.subject || '').trim()
   const dept = String(state.data.dept || '').trim()
   const info = String(state.data.info || '').trim()
@@ -1215,8 +1246,16 @@ function aiInstructionForPage(contextDescription) {
           ? '결과(동작/배선 품질/안전/미관 점검)'
           : '기타'
 
-  return `다음은 전기 실습 이미지 정밀 분석 요청입니다.
+  const sparseBlock = !hasImages
+    ? `
+중요(이미지 없음):
+- 이번 요청에는 분석용 회로도/실습 사진이 첨부되어 있지 않습니다. 특정 단자·배선·부품 상태를 단정하거나 '확인했다'처럼 쓰지 마세요.
+- 일반 안전·실습 진행 팁과, 구체 답을 위해 필요한 사진/정보(무엇을 어떻게 찍을지)만 짧게(6문장 이내) 안내하세요.
+`
+    : ''
 
+  return `다음은 전기 실습 이미지 정밀 분석 요청입니다.
+${sparseBlock}
 맥락:
 - 단계: ${stage}
 - 과목: ${subject || '(미입력)'}
@@ -1331,13 +1370,16 @@ async function sendChatMessage(
   sendBtn.classList.add('btn--loading')
   try {
     const images = await buildAiImagesForChat()
-    const instruction = `${aiInstructionForPage(contextDescription)}\n${buildPracticeContextForAi()}`
+    const hasImages = images.length > 0
+    const instruction = `${aiInstructionForPage(contextDescription, hasImages)}\n${buildPracticeContextForAi()}`
     // UI에 보이는 대화(state.messages)는 유지하고, AI 요청에만 정밀 분석 지시문을 앞에 추가
     const messagesForAi = [
       { role: 'user', content: instruction },
       ...state.messages,
     ]
-    const reply = await sendOpenAiChat(messagesForAi, contextDescription, images)
+    const reply = await sendOpenAiChat(messagesForAi, contextDescription, images, {
+      skipRefine: !hasImages,
+    })
     state.messages.push({ role: 'assistant', content: reply })
   } catch (e) {
     const msg =
@@ -1923,7 +1965,7 @@ function render() {
       }
 
       try {
-        const insights = await generateAiReportInsights()
+        const insights = await generateAiReportInsights({ swot })
         if (insights?.swot) {
           swot = insights.swot
           aiSummaryText = insights.summary || ''
@@ -1962,7 +2004,7 @@ function render() {
       if (!state.journalSnapshot) {
         msg.className = 'info-banner'
         msg.textContent =
-          '먼저「최종 실습일지 생성」으로 한글 양식을 만든 뒤 PDF를 내보내 주세요.'
+          '먼저「최종 실습일지 생성」을 실행한 뒤 PDF를 내보내 주세요.'
         return
       }
       msg.className = 'success-msg'
@@ -2045,7 +2087,7 @@ function render() {
         setLastSubmissionIdForCurrentStudent(saved.id)
         msg.textContent = isRemoteSubmissionsEnabled()
           ? '제출이 서버에 반영되었습니다. 다른 기기에서도 관리자 모드로 확인할 수 있습니다.'
-          : '관리자 모드에 반영되었습니다. 동기화 서버를 연결하면 휴대폰·다른 PC에서도 같은 제출을 볼 수 있습니다.'
+          : '관리자 모드에 반영되었습니다.'
         renderTeacherFeedbackStatus(root)
       } catch (e) {
         msg.className = 'info-banner submit-teacher-msg'

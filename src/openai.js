@@ -1,9 +1,11 @@
 /**
- * 개발 서버(Vite)가 /api/openai/chat 으로 OpenAI를 프록시합니다.
- * API 키는 .env 의 OPENAI_API_KEY 만 사용하고 브라우저로 보내지 않습니다.
+ * AI 프록시 사용 가능 여부.
+ * - 로컬: Vite dev 서버가 /api/openai/chat 을 처리합니다.
+ * - Netlify: netlify.toml 이 같은 경로를 Function으로 넘깁니다. 키는 Netlify 환경 변수에만 두세요.
+ * (정적 호스팅만 하고 프록시가 없으면 요청이 404가 되어 챗봇에서 오류로 보입니다.)
  */
 export function isOpenAiProxyAvailable() {
-  return import.meta.env.DEV
+  return true
 }
 
 /**

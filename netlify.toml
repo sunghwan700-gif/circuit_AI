@@ -1,0 +1,10 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# 브라우저는 계속 /api/openai/chat 으로 요청하고, Netlify Function이 Gemini를 호출합니다.
+[[redirects]]
+  from = "/api/openai/chat"
+  to = "/.netlify/functions/openai-chat"
+  status = 200
+  force = true

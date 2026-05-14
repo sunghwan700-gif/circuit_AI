@@ -1354,6 +1354,7 @@ async function sendChatMessage(
   inputEl.value = ''
   state.messages.push({ role: 'user', content: text })
   renderChatMessages(messagesEl)
+  scrollChatToBottom(messagesEl)
 
   const useApi = isOpenAiProxyAvailable()
   if (!useApi) {
@@ -1362,12 +1363,15 @@ async function sendChatMessage(
       content: mockAiReply(contextDescription),
     })
     renderChatMessages(messagesEl)
+    scrollChatToBottom(messagesEl)
     return
   }
 
   sendBtn.disabled = true
   inputEl.disabled = true
   sendBtn.classList.add('btn--loading')
+  renderChatMessages(messagesEl, { pendingAssistant: true })
+  scrollChatToBottom(messagesEl)
   try {
     const images = await buildAiImagesForChat()
     const hasImages = images.length > 0
@@ -1406,11 +1410,24 @@ async function sendChatMessage(
     sendBtn.classList.remove('btn--loading')
   }
   renderChatMessages(messagesEl)
+  scrollChatToBottom(messagesEl)
 }
 
-function renderChatMessages(container) {
+function scrollChatToBottom(container) {
   if (!container) return
-  container.innerHTML = state.messages
+  requestAnimationFrame(() => {
+    container.scrollTop = container.scrollHeight
+  })
+}
+
+/**
+ * @param {HTMLElement | null} container
+ * @param {{ pendingAssistant?: boolean }} [opts]
+ */
+function renderChatMessages(container, opts = {}) {
+  if (!container) return
+  const pending = Boolean(opts.pendingAssistant)
+  const turns = state.messages
     .map((m) => {
       const roleLabel = m.role === 'user' ? 'USER' : 'Circuit AI'
       const avatar =
@@ -1428,6 +1445,21 @@ function renderChatMessages(container) {
     </article>`
     })
     .join('')
+  const pendingHtml = pending
+    ? `<article class="chat-turn chat-turn--assistant chat-turn--pending" aria-busy="true" aria-live="polite" aria-label="Circuit AI 답변 생성 중">
+      <div class="chat-turn__avatar" aria-hidden="true"></div>
+      <div class="chat-turn__column">
+        <span class="chat-turn__label">Circuit AI</span>
+        <div class="chat-bubble chat-bubble--assistant chat-bubble--pending">
+          <div class="chat-bubble__content chat-bubble__content--pending">
+            <span class="chat-spinner" aria-hidden="true"></span>
+            <span class="chat-pending-text">답변을 생성하는 중…</span>
+          </div>
+        </div>
+      </div>
+    </article>`
+    : ''
+  container.innerHTML = turns + pendingHtml
 }
 
 function renderAiChatbot(contextDescription) {

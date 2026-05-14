@@ -2596,6 +2596,51 @@ code {
   overflow-wrap: break-word;
 }
 
+.chat-bubble--pending .chat-bubble__content--pending {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0 12px;
+  min-height: 36px;
+}
+
+.chat-spinner {
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  /* 트랙은 과하게 흐리지 않게(가독성), 상단 호는 강조색 */
+  border: 3.5px solid color-mix(in srgb, var(--text-h) 32%, var(--bg));
+  border-top-color: var(--accent);
+  border-right-color: color-mix(in srgb, var(--accent) 72%, var(--text-h) 28%);
+  border-radius: 50%;
+  animation: chat-spinner-rotate 0.55s linear infinite;
+  flex-shrink: 0;
+  /* 가느다란 링이 흐릿해 보이는 현상 완화 */
+  filter: contrast(1.08);
+}
+
+@keyframes chat-spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-spinner {
+    animation: none;
+    border-color: color-mix(in srgb, var(--text-h) 32%, var(--bg));
+    border-top-color: var(--accent);
+    border-right-color: var(--accent);
+    filter: none;
+  }
+}
+
+.chat-pending-text {
+  font-size: 18px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-h) 88%, var(--text-muted) 12%);
+}
+
 /* 앱 전체 AI 결과 텍스트(보고서 요약/배너 등): 정렬·줄바꿈·가독성 통일 */
 .ai-output {
   text-align: left;

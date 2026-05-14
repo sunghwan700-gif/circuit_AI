@@ -539,7 +539,13 @@ function movePage(n) {
   render()
 }
 
-const ADMIN_USERNAME = 'admin'
+const ADMIN_USERNAME =
+  typeof import.meta !== 'undefined' &&
+  import.meta.env &&
+  typeof import.meta.env.VITE_TEACHER_USERNAME === 'string' &&
+  import.meta.env.VITE_TEACHER_USERNAME.trim()
+    ? import.meta.env.VITE_TEACHER_USERNAME.trim()
+    : 'admin'
 const ADMIN_PASSWORD =
   (typeof import.meta !== 'undefined' &&
   import.meta.env &&

@@ -43,6 +43,24 @@ export async function runGeminiChatProxy(body, env) {
     new Set([normalizeModel(primaryModel), ...fallbackModels]),
   )
 
+  /** Netlify Functions 등: 실행 시간 한도(예: 30초) 안에 끝나도록 기본으로 가벼운 설정 */
+  const isNetlify = String(env.NETLIFY || '').toLowerCase() === 'true'
+  const netlifyFast =
+    isNetlify && String(env.GEMINI_NETLIFY_FAST ?? '1').trim() !== '0'
+  const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
+  const maxOutputTokens =
+    Number.isFinite(tokensParsed) &&
+    tokensParsed >= 512 &&
+    tokensParsed <= 8192
+      ? Math.floor(tokensParsed)
+      : netlifyFast
+        ? 3072
+        : 6144
+  const modelCandidatesRun = netlifyFast
+    ? modelCandidates.slice(0, 2)
+    : modelCandidates
+  const maxContinues = netlifyFast ? 2 : 4
+
   const imageList = Array.isArray(images) ? images : []
   const hasImages = imageList.length > 0
   const systemContent = `당신은 전기 실습(회로·승강기·철도전기신호 등)을 돕는 조교입니다. 항상 한국어로 답합니다.
@@ -163,7 +181,7 @@ ${
             generationConfig: {
               temperature: 0.25,
               topP: 0.9,
-              maxOutputTokens: 6144,
+              maxOutputTokens,
             },
           }),
         },
@@ -171,7 +189,7 @@ ${
       return r
     }
 
-    for (const model of modelCandidates) {
+    for (const model of modelCandidatesRun) {
       for (let attempt = 0; attempt < backoffMs.length + 1; attempt++) {
         const r = await callGemini(model, contents)
 
@@ -225,7 +243,6 @@ ${
       }
     }
 
-    const maxContinues = 4
     let out = ''
     let finishReason = ''
     {
@@ -252,7 +269,7 @@ ${
         ],
       })
 
-      const r2 = await callGemini(usedModel || modelCandidates[0], contents)
+      const r2 = await callGemini(usedModel || modelCandidatesRun[0], contents)
       const raw2 = await r2.text()
       if (!r2.ok) break
       const next = extractTextAndFinish(raw2)
@@ -261,9 +278,12 @@ ${
       finishReason = next.finishReason || ''
     }
 
+    const refineOptOut =
+      String(env.GEMINI_DISABLE_REFINE || '').trim() === '1' ||
+      String(env.GEMINI_DISABLE_REFINE || '').trim().toLowerCase() === 'true'
     const refineEnabled =
-      String(env.GEMINI_DISABLE_REFINE || '').trim() !== '1' &&
-      String(env.GEMINI_DISABLE_REFINE || '').trim().toLowerCase() !== 'true'
+      !refineOptOut &&
+      (!netlifyFast || String(env.GEMINI_ENABLE_REFINE || '').trim() === '1')
     const isReportJsonJob = /최종 보고서|SWOT|종합 피드백/i.test(
       String(contextDescription || ''),
     )
@@ -295,7 +315,7 @@ ${out}`
 
         contents.push({ role: 'model', parts: [{ text: out }] })
         contents.push({ role: 'user', parts: [{ text: refinePrompt }] })
-        const rr = await callGemini(usedModel || modelCandidates[0], contents)
+        const rr = await callGemini(usedModel || modelCandidatesRun[0], contents)
         const rawR = await rr.text()
         if (rr.ok) {
           const refined = extractTextAndFinish(rawR).text || ''

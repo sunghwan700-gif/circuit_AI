@@ -87,6 +87,11 @@ export default defineConfig(({ mode }) => {
       {
         name: 'openai-chat-proxy',
         configureServer(server) {
+          server.httpServer?.on('listening', () => {
+            if (!server.httpServer) return
+            server.httpServer.requestTimeout = 0
+            server.httpServer.headersTimeout = 0
+          })
           server.middlewares.use(async (req, res, next) => {
             const pathname = req.url?.split('?')[0] || ''
             if (pathname !== '/api/openai/chat' || req.method !== 'POST') {

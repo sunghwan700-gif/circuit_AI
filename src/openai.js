@@ -77,6 +77,12 @@ function isRetryableErrorMessage(msg) {
   return /일시적|502|503|504|과부하|빈 응답/i.test(msg)
 }
 
+function getChatClientTimeoutMs() {
+  const deploy =
+    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
+  return deploy ? 90_000 : 180_000
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
@@ -147,6 +153,7 @@ async function sendOpenAiChatStreaming(
       Accept: 'application/x-ndjson',
     },
     body: bodyJson,
+    signal: AbortSignal.timeout(getChatClientTimeoutMs()),
   })
 
   if (!res.ok) {
@@ -219,6 +226,7 @@ export async function sendOpenAiChat(messages, contextDescription, images, optio
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(getChatClientTimeoutMs()),
       })
       const raw = await res.text()
       if (!res.ok) throw new Error(parseApiError(raw, res.status))

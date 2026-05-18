@@ -1450,7 +1450,7 @@ async function sendChatMessage(
       content: isQuotaError
         ? `현재 OpenAI API 쿼터(크레딧)가 부족해 실시간 응답을 받을 수 없습니다.\n\n대신 모의 응답으로 계속 진행합니다.\n\n(해결: OpenAI 콘솔에서 결제/크레딧을 확인하고 .env의 OPENAI_API_KEY 설정 후 dev 서버를 재시작하세요.)`
         : isTimeoutError
-          ? `${msg}\n\n(분석에 20~30초 걸릴 수 있습니다. 잠시만 기다려 주세요. 같은 오류가 반복되면 Netlify에 GEMINI_CHAT_MODEL=gemini-2.5-flash 가 설정됐는지 확인해 주세요.)`
+          ? `${msg}\n\n(분석에 1~2분 걸릴 수 있습니다. 잠시만 기다려 주세요. 같은 오류가 반복되면 Netlify에 GEMINI_CHAT_MODEL=gemini-2.5-flash 가 설정됐는지 확인해 주세요.)`
           : `오류: ${msg}`,
     })
     if (isQuotaError) {
@@ -1508,7 +1508,7 @@ function renderChatMessages(container, opts = {}) {
         <div class="chat-bubble chat-bubble--assistant chat-bubble--pending">
           <div class="chat-bubble__content chat-bubble__content--pending">
             <span class="chat-spinner" aria-hidden="true"></span>
-            <span class="chat-pending-text">답변을 생성하는 중…</span>
+            <span class="chat-pending-text">답변을 생성하는 중… (최대 약 2분)</span>
           </div>
         </div>
       </div>

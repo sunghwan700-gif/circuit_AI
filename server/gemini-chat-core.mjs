@@ -110,14 +110,20 @@ export async function runGeminiChatProxy(body, env) {
         : netlifyFast
           ? 3584
           : 6144
-  const modelCandidatesRun = isChatJob
-    ? modelCandidates.slice(0, netlifyFast ? 4 : modelCandidates.length)
-    : netlifyFast
-      ? modelCandidates.slice(0, 3)
-      : modelCandidates
+  const modelCandidatesRun = netlifyFast
+    ? modelCandidates.slice(0, 2)
+    : modelCandidates
   const maxContinues =
     isNetlify && isChatJob ? 1 : useProPrimary ? 3 : netlifyFast ? 2 : 4
-  const retryDelaysMs = netlifyFast ? [400, 900, 1600] : [250, 750, 1500, 2200]
+  const retryDelaysMs = netlifyFast ? [400, 900] : [250, 750, 1500]
+
+  const fetchTimeoutParsed = Number(String(env.GEMINI_FETCH_TIMEOUT_MS || '').trim())
+  const geminiFetchTimeoutMs =
+    Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5000
+      ? Math.floor(fetchTimeoutParsed)
+      : isNetlify
+        ? 24_000
+        : 120_000
 
   const imageList = Array.isArray(images) ? images : []
   const hasImages = imageList.length > 0
@@ -297,31 +303,33 @@ ${
     }
 
     const callGemini = async (model, contentsToSend) => {
-      const r = await fetch(
+      /** @type {RequestInit} */
+      const fetchInit = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': key,
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            role: 'system',
+            parts: [{ text: systemContent }],
+          },
+          contents: contentsToSend,
+          generationConfig: {
+            temperature: 0.12,
+            topP: 0.88,
+            maxOutputTokens,
+          },
+        }),
+        signal: AbortSignal.timeout(geminiFetchTimeoutMs),
+      }
+      return fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
           model,
         )}:generateContent`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': key,
-          },
-          body: JSON.stringify({
-            systemInstruction: {
-              role: 'system',
-              parts: [{ text: systemContent }],
-            },
-            contents: contentsToSend,
-            generationConfig: {
-              temperature: 0.12,
-              topP: 0.88,
-              maxOutputTokens,
-            },
-          }),
-        },
+        fetchInit,
       )
-      return r
     }
 
     for (const model of modelCandidatesRun) {

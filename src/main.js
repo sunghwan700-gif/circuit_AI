@@ -1167,9 +1167,20 @@ function renderTeacherView(
     return
   }
 
-  setLastSeenCount(loadSubmissions().length)
-  const rows = loadSubmissions()
-  renderTeacherDashboard(pageHost, rows, filterDept, filterSubject, false)
+  pageHost.innerHTML =
+    '<p class="teacher-gate__lead teacher-gate__lead--small">제출 목록을 불러오는 중…</p>'
+  void initTeacherStorage()
+    .catch(() => {})
+    .finally(() => {
+      setLastSeenCount(loadSubmissions().length)
+      renderTeacherDashboard(
+        pageHost,
+        loadSubmissions(),
+        filterDept,
+        filterSubject,
+        false,
+      )
+    })
 }
 
 function totalUploadedImageCount() {
@@ -2014,6 +2025,11 @@ function render() {
           <hr class="divider divider--tight" />
           <h3 class="report-card__subtitle">교사 공유</h3>
           <p class="report-card__p report-card__p--small">교사 Dashboard에 제출을 누르면 선생님의 피드백을 받을 수 있습니다.</p>
+          ${
+            isRemoteSubmissionsEnabled()
+              ? ''
+              : '<p class="info-banner report-sync-hint">이 주소에서는 제출이 이 기기·브라우저에만 저장됩니다. 수업 전체 공유는 배포 URL 또는 선생님 PC의 개발 서버(같은 Wi‑Fi)를 사용하세요.</p>'
+          }
           <button type="button" class="btn btn--outline-blue btn--block submit-teacher-btn">교사 Dashboard에 제출</button>
           <p class="submit-teacher-msg" hidden></p>
           <p class="teacher-feedback-status info-banner info-banner--soft" aria-live="polite"></p>

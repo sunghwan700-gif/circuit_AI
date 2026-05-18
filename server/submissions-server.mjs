@@ -16,6 +16,10 @@ import fs from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
+import { applySubmissionEnvDefaults, loadEnvForMode } from './load-env.mjs'
+
+loadEnvForMode(process.env.NODE_ENV === 'production' ? 'production' : 'development')
+applySubmissionEnvDefaults()
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA = path.join(__dirname, 'data', 'submissions.json')
@@ -24,7 +28,11 @@ const PORT = Number(process.env.PORT || 8787)
 const TOKEN_ALL = (process.env.SUBMISSIONS_API_TOKEN || '').trim()
 const TOKEN_STUDENT = (process.env.SUBMISSIONS_STUDENT_TOKEN || '').trim()
 const TOKEN_TEACHER = (process.env.SUBMISSIONS_TEACHER_TOKEN || '').trim()
-const TEACHER_PASSWORD = (process.env.SUBMISSIONS_TEACHER_PASSWORD || '').trim()
+const TEACHER_PASSWORD = (
+  process.env.SUBMISSIONS_TEACHER_PASSWORD ||
+  process.env.VITE_TEACHER_PASSWORD ||
+  ''
+).trim()
 const TEACHERS_JSON = (process.env.SUBMISSIONS_TEACHERS_JSON || '').trim()
 const TEACHER_SESSION_TTL_MS = Math.max(
   60_000,
@@ -522,9 +530,10 @@ const server = http.createServer(async (req, res) => {
   res.end()
 })
 
-server.listen(PORT, () => {
+const HOST = (process.env.SUBMISSIONS_BIND_HOST || '0.0.0.0').trim()
+server.listen(PORT, HOST, () => {
   console.log(
-    `[submissions API] http://127.0.0.1:${PORT}/api/submissions` +
+    `[submissions API] http://127.0.0.1:${PORT}/api/submissions (LAN: 포트 ${PORT})` +
       (TOKEN_ALL || TOKEN_STUDENT || TOKEN_TEACHER ? ' (Bearer 토큰 필요)' : ''),
   )
 })

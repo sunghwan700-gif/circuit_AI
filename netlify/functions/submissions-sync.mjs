@@ -8,7 +8,11 @@ import { randomUUID } from 'crypto'
 const TOKEN_ALL = (process.env.SUBMISSIONS_API_TOKEN || '').trim()
 const TOKEN_STUDENT = (process.env.SUBMISSIONS_STUDENT_TOKEN || '').trim()
 const TOKEN_TEACHER = (process.env.SUBMISSIONS_TEACHER_TOKEN || '').trim()
-const TEACHER_PASSWORD = (process.env.SUBMISSIONS_TEACHER_PASSWORD || '').trim()
+const TEACHER_PASSWORD = (
+  process.env.SUBMISSIONS_TEACHER_PASSWORD ||
+  process.env.VITE_TEACHER_PASSWORD ||
+  ''
+).trim()
 const TEACHERS_JSON = (process.env.SUBMISSIONS_TEACHERS_JSON || '').trim()
 const TEACHER_SESSION_TTL_MS = Math.max(
   60_000,

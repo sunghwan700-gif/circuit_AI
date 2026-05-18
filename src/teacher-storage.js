@@ -167,7 +167,17 @@ async function postRemoteUpsert(record) {
     headers: authHeaders(),
     body: JSON.stringify(record),
   })
-  if (!r.ok) throw new Error(`POST ${r.status}`)
+  if (!r.ok) {
+    const detail = await r.text().catch(() => '')
+    if (r.status === 401) {
+      throw new Error(
+        '제출 인증에 실패했습니다. 배포 사이트라면 환경 변수(VITE_SUBMISSIONS_STUDENT_TOKEN)를 확인하세요.',
+      )
+    }
+    throw new Error(
+      `제출 서버 오류 (${r.status})${detail ? `: ${String(detail).slice(0, 120)}` : ''}`,
+    )
+  }
   const out = await r.json()
   return out && typeof out === 'object' ? out : record
 }

@@ -1,10 +1,16 @@
 /**
  * AI 프록시 사용 가능 여부.
  * - 로컬: Vite dev 서버가 /api/openai/chat 을 처리합니다.
- * - Netlify: netlify.toml 이 같은 경로를 Function으로 넘깁니다. 키는 Netlify 환경 변수에만 두세요.
+ * - Netlify: Function (스트리밍·heartbeat)
  */
 export function isOpenAiProxyAvailable() {
   return true
+}
+
+function getChatApiUrl() {
+  const deploy =
+    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
+  return deploy ? '/.netlify/functions/openai-chat' : '/api/openai/chat'
 }
 
 /**
@@ -21,7 +27,7 @@ function parseApiError(raw, status) {
     /Inactivity Timeout/i.test(text) ||
     /Too much time has passed without sending any data/i.test(text)
   ) {
-    return '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요. (회로도 1장만 올린 뒤 질문해 보세요.)'
+    return '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
   }
 
   if (
@@ -29,7 +35,7 @@ function parseApiError(raw, status) {
       text,
     )
   ) {
-    return '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요. (회로도 1장만 올린 뒤 질문하면 더 안정적입니다.)'
+    return '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
   }
 
   try {
@@ -52,81 +58,162 @@ function parseApiError(raw, status) {
 
 /** @param {string} msg */
 function isRetryableErrorMessage(msg) {
-  return /응답 시간|Inactivity|일시적|502|503|504|과부하|빈 응답|timed out|deadline|요청 실패 \(5/i.test(
-    msg,
-  )
+  return /일시적|502|503|504|과부하|빈 응답/i.test(msg)
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
- * @param {{ role: string, content: string }[]} messages
- * @param {string} contextDescription
- * @param {{ dataUrl: string, label?: string }[]=} images
- * @param {{ skipRefine?: boolean, maxAttempts?: number }=} options
+ * @param {ReadableStream<Uint8Array>} body
+ * @param {(ev: { event: string, text?: string, message?: string }) => void} onEvent
  */
-async function sendOpenAiChatOnce(messages, contextDescription, images, options) {
-  const body = { messages, contextDescription, images }
-  if (options?.skipRefine) body.skipRefine = true
-
-  let bodyJson
-  try {
-    bodyJson = JSON.stringify(body)
-  } catch {
-    throw new Error(
-      '대화·이미지 데이터가 너무 큽니다. 사진 수를 줄이거나 페이지를 새로고침한 뒤 다시 시도해 주세요.',
-    )
+async function consumeNdjsonStream(body, onEvent) {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const lines = buf.split('\n')
+    buf = lines.pop() || ''
+    for (const line of lines) {
+      const t = line.trim()
+      if (!t) continue
+      try {
+        onEvent(JSON.parse(t))
+      } catch {
+        /* ignore partial */
+      }
+    }
   }
-  const maxBytes = 5_200_000
-  if (bodyJson.length > maxBytes) {
-    throw new Error(
-      '이미지·대화 내용이 서버 한도를 넘었습니다. 회로도 1장과 실습 사진 2장 이하로 줄여 다시 질문해 주세요.',
-    )
+  const tail = buf.trim()
+  if (tail) {
+    try {
+      onEvent(JSON.parse(tail))
+    } catch {
+      /* ignore */
+    }
   }
-
-  const res = await fetch('/api/openai/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: bodyJson,
-  })
-
-  const raw = await res.text()
-  if (!res.ok) {
-    throw new Error(parseApiError(raw, res.status))
-  }
-
-  let data
-  try {
-    data = JSON.parse(raw)
-  } catch {
-    throw new Error(parseApiError(raw, res.status))
-  }
-
-  const text = data.choices?.[0]?.message?.content?.trim()
-  if (!text) throw new Error('모델 응답이 비어 있습니다.')
-  return text
 }
 
 /**
  * @param {{ role: string, content: string }[]} messages
  * @param {string} contextDescription
  * @param {{ dataUrl: string, label?: string }[]=} images
- * @param {{ skipRefine?: boolean, maxAttempts?: number }=} options
+ * @param {{ skipRefine?: boolean, onStatus?: (msg: string) => void }=} options
+ */
+async function sendOpenAiChatStreaming(
+  messages,
+  contextDescription,
+  images,
+  options,
+) {
+  const body = {
+    messages,
+    contextDescription,
+    images,
+    skipRefine: true,
+    stream: true,
+  }
+
+  const bodyJson = JSON.stringify(body)
+  if (bodyJson.length > 5_200_000) {
+    throw new Error(
+      '이미지·대화 내용이 서버 한도를 넘었습니다. 사진 수를 줄여 다시 질문해 주세요.',
+    )
+  }
+
+  const res = await fetch(getChatApiUrl(), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/x-ndjson',
+    },
+    body: bodyJson,
+  })
+
+  if (!res.ok) {
+    const raw = await res.text()
+    throw new Error(parseApiError(raw, res.status))
+  }
+
+  const ctype = res.headers.get('content-type') || ''
+  if (!ctype.includes('ndjson') || !res.body) {
+    const raw = await res.text()
+    let data
+    try {
+      data = JSON.parse(raw)
+    } catch {
+      throw new Error(parseApiError(raw, res.status))
+    }
+    const text = data.choices?.[0]?.message?.content?.trim()
+    if (!text) throw new Error('모델 응답이 비어 있습니다.')
+    return text
+  }
+
+  let resultText = ''
+  await consumeNdjsonStream(res.body, (ev) => {
+    if (ev.event === 'status' && ev.message && options?.onStatus) {
+      options.onStatus(String(ev.message))
+    }
+    if (ev.event === 'error' && ev.message) {
+      throw new Error(String(ev.message))
+    }
+    if (ev.event === 'done' && ev.text) {
+      resultText = String(ev.text)
+    }
+  })
+
+  if (!resultText.trim()) {
+    throw new Error('모델 응답이 비어 있습니다.')
+  }
+  return resultText.trim()
+}
+
+/**
+ * @param {{ role: string, content: string }[]} messages
+ * @param {string} contextDescription
+ * @param {{ dataUrl: string, label?: string }[]=} images
+ * @param {{ skipRefine?: boolean, maxAttempts?: number, onStatus?: (msg: string) => void }=} options
  */
 export async function sendOpenAiChat(messages, contextDescription, images, options) {
-  const maxAttempts = Math.max(1, Math.min(4, options?.maxAttempts ?? 3))
+  const deploy =
+    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
+  const maxAttempts = deploy ? 1 : Math.max(1, Math.min(2, options?.maxAttempts ?? 2))
+
   let lastError = new Error('요청에 실패했습니다.')
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      return await sendOpenAiChatOnce(messages, contextDescription, images, options)
+      if (options?.stream !== false) {
+        return await sendOpenAiChatStreaming(
+          messages,
+          contextDescription,
+          images,
+          options,
+        )
+      }
+      const body = { messages, contextDescription, images, stream: false }
+      if (options?.skipRefine) body.skipRefine = true
+      const res = await fetch(getChatApiUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const raw = await res.text()
+      if (!res.ok) throw new Error(parseApiError(raw, res.status))
+      const data = JSON.parse(raw)
+      const text = data.choices?.[0]?.message?.content?.trim()
+      if (!text) throw new Error('모델 응답이 비어 있습니다.')
+      return text
     } catch (e) {
       lastError = e instanceof Error ? e : new Error(String(e))
       const msg = lastError.message
-      const canRetry =
-        attempt < maxAttempts - 1 && isRetryableErrorMessage(msg)
-      if (!canRetry) throw lastError
-      await sleep(1400 * (attempt + 1))
+      if (attempt >= maxAttempts - 1 || !isRetryableErrorMessage(msg)) {
+        throw lastError
+      }
+      await sleep(2000)
     }
   }
 

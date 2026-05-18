@@ -32,12 +32,28 @@ export async function runGeminiChatProxy(body, env) {
   const netlifyFast =
     isNetlify && String(env.GEMINI_NETLIFY_FAST ?? '1').trim() !== '0'
 
+  const ctx = String(contextDescription || '')
+  const isReportJob =
+    /최종 보고서|SWOT|종합 피드백|교사용 개별 피드백 초안/i.test(ctx)
+  const isChatJob = !isReportJob
+
   const explicitModel = normalizeModel(
     env.GEMINI_MODEL || env.GOOGLE_MODEL || '',
   )
-  const primaryModel =
+  const chatModelEnv = normalizeModel(env.GEMINI_CHAT_MODEL || '')
+
+  let primaryModel =
     explicitModel ||
     (netlifyFast ? 'gemini-2.5-flash' : 'gemini-2.5-pro')
+
+  // Netlify 실시간 채팅: pro는 10~26초 한도에 자주 걸림 → flash(정밀 프롬프트 유지)
+  if (isNetlify && isChatJob) {
+    primaryModel = chatModelEnv || 'gemini-2.5-flash'
+  } else if (isNetlify && isReportJob) {
+    primaryModel =
+      explicitModel || chatModelEnv || 'gemini-2.5-pro'
+  }
+
   const useProPrimary = /pro/i.test(primaryModel)
 
   const fallbackModels = String(
@@ -77,7 +93,8 @@ export async function runGeminiChatProxy(body, env) {
   const modelCandidatesRun = netlifyFast
     ? modelCandidates.slice(0, 2)
     : modelCandidates
-  const maxContinues = useProPrimary ? 3 : netlifyFast ? 2 : 4
+  const maxContinues =
+    isNetlify && isChatJob ? 1 : useProPrimary ? 3 : netlifyFast ? 2 : 4
   const retryDelaysMs = netlifyFast ? [400, 900] : [250, 750, 1500]
 
   const imageList = Array.isArray(images) ? images : []
@@ -505,5 +522,51 @@ ${out}`
         error: { message: friendly },
       }),
     }
+  }
+}
+
+/**
+ * NDJSON heartbeat — Netlify 게이트웨이 Inactivity Timeout 방지
+ * @param {object} body
+ * @param {Record<string, string | undefined>} env
+ * @param {(obj: object) => void} push
+ */
+export async function runGeminiChatWithHeartbeat(body, env, push) {
+  push({ event: 'status', message: '회로·사진을 분석하는 중입니다…' })
+  let pingTimer = setInterval(() => push({ event: 'ping' }), 2500)
+  try {
+    const result = await runGeminiChatProxy(body, env)
+    clearInterval(pingTimer)
+    pingTimer = null
+
+    if (result.statusCode !== 200) {
+      let msg = '요청에 실패했습니다.'
+      try {
+        const j = JSON.parse(result.body)
+        msg = j.error?.message || msg
+      } catch {
+        /* ignore */
+      }
+      push({ event: 'error', message: msg })
+      return
+    }
+
+    let text = ''
+    try {
+      text = JSON.parse(result.body).choices?.[0]?.message?.content || ''
+    } catch {
+      /* ignore */
+    }
+    if (!String(text).trim()) {
+      push({ event: 'error', message: '모델 응답이 비어 있습니다.' })
+      return
+    }
+    push({ event: 'done', text: String(text).trim() })
+  } catch (e) {
+    if (pingTimer) clearInterval(pingTimer)
+    push({
+      event: 'error',
+      message: e instanceof Error ? e.message : String(e),
+    })
   }
 }

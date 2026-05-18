@@ -1,6 +1,9 @@
 import { resolve } from 'path'
 import { defineConfig, loadEnv } from 'vite'
-import { runGeminiChatProxy } from './server/gemini-chat-core.mjs'
+import {
+  runGeminiChatProxy,
+  runGeminiChatWithHeartbeat,
+} from './server/gemini-chat-core.mjs'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -25,6 +28,19 @@ export default defineConfig(({ mode }) => {
               res.statusCode = 400
               res.setHeader('Content-Type', 'application/json; charset=utf-8')
               res.end(JSON.stringify({ error: { message: 'Invalid JSON' } }))
+              return
+            }
+
+            if (body.stream !== false) {
+              res.statusCode = 200
+              res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8')
+              res.setHeader('Cache-Control', 'no-cache')
+              res.setHeader('Connection', 'keep-alive')
+              const push = (obj) => {
+                res.write(`${JSON.stringify(obj)}\n`)
+              }
+              await runGeminiChatWithHeartbeat(body, env, push)
+              res.end()
               return
             }
 

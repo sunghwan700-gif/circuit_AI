@@ -1412,9 +1412,15 @@ async function sendChatMessage(
       { role: 'user', content: instruction },
       ...trimMessagesForApi(state.messages, 12),
     ]
+    let statusEl = messagesEl.querySelector('.chat-pending-text')
     const reply = await sendOpenAiChat(messagesForAi, contextDescription, images, {
       skipRefine: true,
-      maxAttempts: 3,
+      onStatus: (msg) => {
+        if (!statusEl) {
+          statusEl = messagesEl.querySelector('.chat-pending-text')
+        }
+        if (statusEl) statusEl.textContent = msg
+      },
     })
     state.messages.push({ role: 'assistant', content: reply })
   } catch (e) {
@@ -1433,7 +1439,7 @@ async function sendChatMessage(
       content: isQuotaError
         ? `현재 OpenAI API 쿼터(크레딧)가 부족해 실시간 응답을 받을 수 없습니다.\n\n대신 모의 응답으로 계속 진행합니다.\n\n(해결: OpenAI 콘솔에서 결제/크레딧을 확인하고 .env의 OPENAI_API_KEY 설정 후 dev 서버를 재시작하세요.)`
         : isTimeoutError
-          ? `${msg}\n\n(자동 재시도 후에도 실패했습니다. 2~3페이지에서 회로도 1장만 올리고 예시 질문 버튼을 눌러 보세요.)`
+          ? `${msg}\n\n(분석에 20~30초 걸릴 수 있습니다. 잠시만 기다려 주세요. 같은 오류가 반복되면 Netlify에 GEMINI_CHAT_MODEL=gemini-2.5-flash 가 설정됐는지 확인해 주세요.)`
           : `오류: ${msg}`,
     })
     if (isQuotaError) {
@@ -1526,7 +1532,7 @@ function renderAiChatbot(contextDescription) {
   const hint = document.createElement('p')
   hint.className = 'ai-chat__hint'
   hint.innerHTML =
-    '회로도와 실습 사진을 올리면 <strong>도면·실물을 대조</strong>해 피드백합니다. 확인된 내용만 답하도록 설정되어 있습니다. (3~4페이지 실습 사진도 채팅에 포함됩니다.)'
+    '회로도·실습 사진을 함께 분석합니다. 배포 환경에서는 응답 안정성을 위해 채팅은 <strong>Flash</strong>, 최종 보고서는 <strong>Pro</strong> 모델을 사용합니다. 분석 중에는 20~30초 기다려 주세요.'
   messagesEl.before(hint)
 
   const starters = document.createElement('div')

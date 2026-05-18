@@ -420,6 +420,8 @@ code {
   margin-top: 28px;
   margin-bottom: 0;
   padding-block: 24px 0;
+  align-items: center;
+  text-align: center;
 }
 
 /* 교사 로그인: 2페이지 헤더(.step-title / .step-lede)와 동일 크기·줄간격 */
@@ -543,6 +545,7 @@ code {
 
 .teacher-dash__head {
   margin-bottom: 44px;
+  text-align: center;
 }
 
 .teacher-dash__title {
@@ -552,6 +555,7 @@ code {
   letter-spacing: -0.01em;
   line-height: 1.2;
   color: var(--text-h);
+  text-align: center;
 }
 
 .teacher-dash__sub {
@@ -560,6 +564,7 @@ code {
   font-weight: 400;
   line-height: 1.45;
   color: var(--text-muted);
+  text-align: center;
 }
 
 .teacher-dash__toolbar {
@@ -1370,6 +1375,12 @@ code {
   margin-top: 40px;
   margin-bottom: 48px;
   padding-block: 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
 }
 
 .cover-brand__eyebrow {
@@ -1380,6 +1391,7 @@ code {
   text-transform: uppercase;
   color: var(--accent);
   margin: 0 0 18px;
+  text-align: center;
 }
 
 .circuit-title {
@@ -1389,6 +1401,8 @@ code {
   line-height: 1.18;
   margin: 0 0 16px;
   color: var(--text-h);
+  text-align: center;
+  width: 100%;
 }
 
 @media (min-width: 900px) {
@@ -1406,6 +1420,7 @@ code {
   color: var(--text-muted);
   letter-spacing: 0.06em;
   margin-top: 12px;
+  text-align: center;
   /* 필기체 웹폰트 굵기 한계 보완 */
   text-shadow:
     0.65px 0 0 currentColor,

@@ -1735,7 +1735,7 @@ function render() {
           <button type="button" class="btn btn--danger btn--sm del-process">업로드 삭제</button>
         </div>
         <div class="upload-gallery upload-gallery--process" aria-label="업로드된 중간 과정 목록"></div>
-        <button type="button" class="btn btn--primary btn--lg step-next">최종 완성 단계로</button>
+        <button type="button" class="btn btn--primary btn--lg step-next">최종 완성 단계로 이동</button>
       </div>
     `
     const fileInput = mainCol.querySelector('.file-process')

@@ -42,27 +42,28 @@ export async function runGeminiChatProxy(body, env) {
   )
   const chatModelEnv = normalizeModel(env.GEMINI_CHAT_MODEL || '')
 
-  let primaryModel =
-    explicitModel ||
-    (netlifyFast ? 'gemini-2.5-flash' : 'gemini-2.5-pro')
-
-  // Netlify 실시간 채팅: pro는 10~26초 한도에 자주 걸림 → flash(정밀 프롬프트 유지)
-  if (isNetlify && isChatJob) {
-    primaryModel = chatModelEnv || 'gemini-2.5-flash'
-  } else if (isNetlify && isReportJob) {
-    primaryModel =
-      explicitModel || chatModelEnv || 'gemini-2.5-pro'
+  // 기본은 flash 전용(pro는 과부하·타임아웃이 잦음). 정밀도는 시스템 프롬프트로 유지.
+  const defaultModel = 'gemini-2.5-flash'
+  let primaryModel
+  if (isChatJob) {
+    primaryModel = chatModelEnv || explicitModel || defaultModel
+  } else if (isReportJob) {
+    primaryModel = explicitModel || chatModelEnv || defaultModel
+  } else {
+    primaryModel = explicitModel || defaultModel
   }
 
   const useProPrimary = /pro/i.test(primaryModel)
 
+  const chatFallbackDefault =
+    'gemini-2.5-flash,gemini-2.0-flash,gemini-2.0-flash-lite'
+  const reportFallbackDefault = chatFallbackDefault
+
   const fallbackModels = String(
     env.GEMINI_FALLBACK_MODELS ||
-      (useProPrimary
-        ? 'gemini-2.5-flash'
-        : netlifyFast
-          ? 'gemini-2.5-flash,gemini-2.0-flash'
-          : 'gemini-2.5-pro,gemini-2.5-flash,gemini-3-flash-preview'),
+      (isChatJob || isReportJob || netlifyFast
+        ? chatFallbackDefault
+        : `${defaultModel},gemini-2.0-flash,gemini-2.0-flash-lite`),
   )
     .split(',')
     .map((s) => normalizeModel(s))
@@ -71,8 +72,8 @@ export async function runGeminiChatProxy(body, env) {
   let modelCandidates = Array.from(
     new Set([primaryModel, ...fallbackModels]),
   )
-  // 환경 변수로 pro를 지정했으면 flash를 앞에 두지 않음 (정밀 모드 우선)
-  if (netlifyFast && !useProPrimary) {
+  // flash 계열을 먼저 시도
+  if (isChatJob || isReportJob || netlifyFast || !useProPrimary) {
     const flashFirst = modelCandidates.filter((m) => /flash/i.test(m))
     const rest = modelCandidates.filter((m) => !/flash/i.test(m))
     modelCandidates = [...flashFirst, ...rest]
@@ -90,12 +91,14 @@ export async function runGeminiChatProxy(body, env) {
         : netlifyFast
           ? 3584
           : 6144
-  const modelCandidatesRun = netlifyFast
-    ? modelCandidates.slice(0, 2)
-    : modelCandidates
+  const modelCandidatesRun = isChatJob
+    ? modelCandidates.slice(0, netlifyFast ? 4 : modelCandidates.length)
+    : netlifyFast
+      ? modelCandidates.slice(0, 3)
+      : modelCandidates
   const maxContinues =
     isNetlify && isChatJob ? 1 : useProPrimary ? 3 : netlifyFast ? 2 : 4
-  const retryDelaysMs = netlifyFast ? [400, 900] : [250, 750, 1500]
+  const retryDelaysMs = netlifyFast ? [400, 900, 1600] : [250, 750, 1500, 2200]
 
   const imageList = Array.isArray(images) ? images : []
   const hasImages = imageList.length > 0
@@ -335,7 +338,8 @@ ${
         const shouldRetry =
           lastStatus === 429 ||
           lastStatus === 503 ||
-          /high demand|overloaded|try again later|RESOURCE_EXHAUSTED/i.test(
+          lastStatus === 500 ||
+          /high demand|overloaded|try again later|RESOURCE_EXHAUSTED|UNAVAILABLE|capacity|quota/i.test(
             lastMessage,
           )
 
@@ -351,12 +355,15 @@ ${
     }
 
     if (lastStatus !== 200) {
-      const friendly =
-        /high demand|overloaded|try again later|RESOURCE_EXHAUSTED/i.test(
+      const overloaded =
+        lastStatus === 429 ||
+        lastStatus === 503 ||
+        /high demand|overloaded|try again later|RESOURCE_EXHAUSTED|UNAVAILABLE/i.test(
           lastMessage,
         )
-          ? '현재 Gemini 모델이 과부하 상태입니다(일시적). 잠시 후 다시 시도하거나, 다른 모델로 바꿔보세요.\n\n해결: 환경 변수에 GEMINI_MODEL=gemini-2.5-flash (또는 gemini-3-flash-preview) 를 넣거나, GEMINI_FALLBACK_MODELS에 여러 모델을 콤마로 지정할 수 있습니다.'
-          : lastMessage
+      const friendly = overloaded
+        ? 'AI 서버가 잠시 바쁩니다. 10~20초 뒤에 같은 질문을 다시 보내 주세요. (사진이 많으면 회로도 1장만 첨부해 보세요.)'
+        : lastMessage
       return {
         ok: false,
         statusCode: lastStatus,

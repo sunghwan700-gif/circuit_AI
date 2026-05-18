@@ -180,7 +180,10 @@ async function sendOpenAiChatStreaming(
 export async function sendOpenAiChat(messages, contextDescription, images, options) {
   const deploy =
     import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
-  const maxAttempts = deploy ? 1 : Math.max(1, Math.min(2, options?.maxAttempts ?? 2))
+  const maxAttempts = Math.max(
+    1,
+    Math.min(deploy ? 2 : 3, options?.maxAttempts ?? (deploy ? 2 : 2)),
+  )
 
   let lastError = new Error('요청에 실패했습니다.')
 
@@ -213,7 +216,7 @@ export async function sendOpenAiChat(messages, contextDescription, images, optio
       if (attempt >= maxAttempts - 1 || !isRetryableErrorMessage(msg)) {
         throw lastError
       }
-      await sleep(2000)
+      await sleep(deploy ? 2500 : 2000)
     }
   }
 

@@ -27,26 +27,34 @@ export async function runGeminiChatProxy(body, env) {
   }
 
   const normalizeModel = (m) => String(m || '').replace(/^models\//, '').trim()
-  const primaryModel = (
+  const isNetlify = String(env.NETLIFY || '').toLowerCase() === 'true'
+  const netlifyFast =
+    isNetlify && String(env.GEMINI_NETLIFY_FAST ?? '1').trim() !== '0'
+
+  const primaryModel = normalizeModel(
     env.GEMINI_MODEL ||
-    env.GOOGLE_MODEL ||
-    'gemini-2.5-pro'
-  ).trim()
+      env.GOOGLE_MODEL ||
+      (netlifyFast ? 'gemini-2.5-flash' : 'gemini-2.5-pro'),
+  )
   const fallbackModels = String(
     env.GEMINI_FALLBACK_MODELS ||
-      'gemini-2.5-pro,gemini-2.5-flash,gemini-3-flash-preview',
+      (netlifyFast
+        ? 'gemini-2.5-flash,gemini-2.0-flash'
+        : 'gemini-2.5-pro,gemini-2.5-flash,gemini-3-flash-preview'),
   )
     .split(',')
     .map((s) => normalizeModel(s))
     .filter(Boolean)
-  const modelCandidates = Array.from(
-    new Set([normalizeModel(primaryModel), ...fallbackModels]),
+  let modelCandidates = Array.from(
+    new Set([primaryModel, ...fallbackModels]),
   )
+  if (netlifyFast) {
+    const flashFirst = modelCandidates.filter((m) => /flash/i.test(m))
+    const rest = modelCandidates.filter((m) => !/flash/i.test(m))
+    modelCandidates = [...flashFirst, ...rest]
+  }
 
-  /** Netlify Functions 등: 실행 시간 한도(예: 30초) 안에 끝나도록 기본으로 가벼운 설정 */
-  const isNetlify = String(env.NETLIFY || '').toLowerCase() === 'true'
-  const netlifyFast =
-    isNetlify && String(env.GEMINI_NETLIFY_FAST ?? '1').trim() !== '0'
+  /** Netlify Functions: 실행 시간·업로드 한도 안에 끝나도록 가벼운 설정 */
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
   const maxOutputTokens =
     Number.isFinite(tokensParsed) &&
@@ -54,15 +62,48 @@ export async function runGeminiChatProxy(body, env) {
     tokensParsed <= 8192
       ? Math.floor(tokensParsed)
       : netlifyFast
-        ? 3072
+        ? 2048
         : 6144
   const modelCandidatesRun = netlifyFast
-    ? modelCandidates.slice(0, 2)
+    ? modelCandidates.slice(0, 1)
     : modelCandidates
-  const maxContinues = netlifyFast ? 2 : 4
+  const maxContinues = netlifyFast ? 0 : 4
+  const retryDelaysMs = netlifyFast ? [400] : [250, 750, 1500]
 
   const imageList = Array.isArray(images) ? images : []
   const hasImages = imageList.length > 0
+
+  if (netlifyFast && imageList.length > 3) {
+    return {
+      ok: false,
+      statusCode: 413,
+      body: JSON.stringify({
+        error: {
+          message:
+            '한 번에 보낼 이미지가 너무 많습니다. 회로도 1장과 실습 사진 1~2장만 포함해 다시 질문해 주세요.',
+        },
+      }),
+    }
+  }
+
+  let approxImageBytes = 0
+  for (const img of imageList) {
+    const m = /^data:[^;]+;base64,(.+)$/i.exec(String(img?.dataUrl || ''))
+    if (m) approxImageBytes += Math.ceil((m[1].length * 3) / 4)
+  }
+  const maxImageBytes = netlifyFast ? 3_500_000 : 8_000_000
+  if (approxImageBytes > maxImageBytes) {
+    return {
+      ok: false,
+      statusCode: 413,
+      body: JSON.stringify({
+        error: {
+          message:
+            '이미지 용량이 커서 서버 한도를 넘었습니다. 회로도만 올린 뒤 다시 질문하거나, 사진 해상도를 낮춰 주세요.',
+        },
+      }),
+    }
+  }
   const systemContent = `당신은 전기 실습(회로·승강기·철도전기신호 등)을 돕는 조교입니다. 항상 한국어로 답합니다.
 
 공통 원칙(가장 중요):
@@ -136,7 +177,7 @@ ${
     }
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-    const backoffMs = [250, 750, 1500]
+    const backoffMs = retryDelaysMs
 
     let lastStatus = 500
     let lastMessage = '요청에 실패했습니다.'
@@ -210,6 +251,14 @@ ${
           /* ignore */
         }
         lastMessage = String(msg || rawText || '요청에 실패했습니다.')
+        if (
+          /<TITLE>\s*Inactivity Timeout\s*<\/TITLE>/i.test(lastMessage) ||
+          /Inactivity Timeout/i.test(lastMessage)
+        ) {
+          lastMessage =
+            '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요. (이미지가 많거나 크면 한 장만 올린 뒤 질문해 보세요.)'
+          break
+        }
 
         const shouldRetry =
           lastStatus === 429 ||

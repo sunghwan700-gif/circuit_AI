@@ -1316,23 +1316,35 @@ function buildPracticeContextForAi() {
 async function buildAiImagesForChat() {
   /** @type {{ dataUrl: string, label?: string }[]} */
   const images = []
+  const deployTight =
+    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' ||
+    import.meta.env.PROD === true
+  const circuitMaxW = deployTight ? 1280 : 2048
+  const circuitQuality = deployTight ? 0.76 : 0.9
+  const photoMaxW = deployTight ? 1200 : 1800
+  const photoQuality = deployTight ? 0.74 : 0.88
+  const photoMax = deployTight ? 2 : 4
+
   // 회로도는 모든 단계에서 가장 중요한 기준이므로 항상(있으면) 포함
   if (state.data.circuitImg) {
     images.push({
       label: '회로도(기준 도면)',
-      dataUrl: await fileToCompressedJpegDataUrl(state.data.circuitImg, 2048, 0.9),
+      dataUrl: await fileToCompressedJpegDataUrl(
+        state.data.circuitImg,
+        circuitMaxW,
+        circuitQuality,
+      ),
     })
   }
 
   // 단계별로 관련 사진은 "최근 N장"을 포함 (페이로드 과대 방지)
-  const photoMax = 4
   if (state.page === 3) {
     const recent = takeLastFiles(state.data.processImgs, photoMax)
     for (let i = 0; i < recent.length; i++) {
       const f = recent[i]
       images.push({
         label: `실습 진행 사진(최근 ${i + 1}/${recent.length})`,
-        dataUrl: await fileToCompressedJpegDataUrl(f, 1800, 0.88),
+        dataUrl: await fileToCompressedJpegDataUrl(f, photoMaxW, photoQuality),
       })
     }
   }
@@ -1342,7 +1354,7 @@ async function buildAiImagesForChat() {
       const f = recent[i]
       images.push({
         label: `최종 결과 사진(최근 ${i + 1}/${recent.length})`,
-        dataUrl: await fileToCompressedJpegDataUrl(f, 1800, 0.88),
+        dataUrl: await fileToCompressedJpegDataUrl(f, photoMaxW, photoQuality),
       })
     }
   }
@@ -1388,7 +1400,7 @@ async function sendChatMessage(
       ...state.messages,
     ]
     const reply = await sendOpenAiChat(messagesForAi, contextDescription, images, {
-      skipRefine: !hasImages,
+      skipRefine: true,
     })
     state.messages.push({ role: 'assistant', content: reply })
   } catch (e) {
@@ -1398,11 +1410,15 @@ async function sendChatMessage(
       /exceeded your current quota/i.test(msg) ||
       /insufficient[_\s-]?quota/i.test(msg) ||
       /billing/i.test(msg)
+    const isTimeoutError =
+      /Inactivity Timeout|응답 시간이 초과|일시적으로 응답하지 않/i.test(msg)
     state.messages.push({
       role: 'assistant',
       content: isQuotaError
         ? `현재 OpenAI API 쿼터(크레딧)가 부족해 실시간 응답을 받을 수 없습니다.\n\n대신 모의 응답으로 계속 진행합니다.\n\n(해결: OpenAI 콘솔에서 결제/크레딧을 확인하고 .env의 OPENAI_API_KEY 설정 후 dev 서버를 재시작하세요.)`
-        : `오류: ${msg}`,
+        : isTimeoutError
+          ? msg
+          : `오류: ${msg}`,
     })
     if (isQuotaError) {
       state.messages.push({

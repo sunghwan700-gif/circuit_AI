@@ -5,9 +5,15 @@
 [build.environment]
   # 여러 기기 제출을 Netlify Functions + Blobs로 같은 출처 /api/* 에 모음
   VITE_SUBMISSIONS_SAME_ORIGIN = "true"
+  # 배포 환경: AI 채팅 이미지·페이로드를 Functions 한도에 맞게 축소
+  VITE_NETLIFY_DEPLOY = "true"
 
 [functions]
   node_bundler = "esbuild"
+
+# Gemini 비전(회로도)은 10초 기본 한도로 자주 끊김 → Pro 플랜에서 최대 26초까지 허용
+[functions."openai-chat"]
+  timeout = 26
 
 # 로컬에서 Netlify와 동일하게(Functions + 리다이렉트 + Blobs) 테스트: npm run dev:netlify
 # 브라우저는 보통 http://localhost:8888 — Vite(5173)로 프록시됩니다.

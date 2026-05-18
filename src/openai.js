@@ -9,6 +9,41 @@ export function isOpenAiProxyAvailable() {
 }
 
 /**
+ * @param {string} raw
+ * @param {number} status
+ */
+function parseApiError(raw, status) {
+  const text = String(raw || '').trim()
+  if (!text) return `요청 실패 (${status})`
+
+  if (
+    /^\s*</.test(text) ||
+    /<TITLE>\s*Inactivity Timeout\s*<\/TITLE>/i.test(text) ||
+    /Inactivity Timeout/i.test(text) ||
+    /Too much time has passed without sending any data/i.test(text)
+  ) {
+    return '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요. (회로도·사진이 크면 한 장만 올린 뒤 질문해 보세요.)'
+  }
+
+  if (status === 504 || status === 502 || status === 503) {
+    return 'AI 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해 주세요.'
+  }
+
+  try {
+    const j = JSON.parse(text)
+    const detail = j.error?.message || j.error
+    if (typeof detail === 'string' && detail.trim()) return detail.trim()
+  } catch {
+    /* ignore */
+  }
+
+  if (text.length > 280) {
+    return `요청 실패 (${status}). 잠시 후 다시 시도해 주세요.`
+  }
+  return text
+}
+
+/**
  * @param {{ role: string, content: string }[]} messages
  * @param {string} contextDescription
  * @param {{ dataUrl: string, label?: string }[]=} images
@@ -25,23 +60,14 @@ export async function sendOpenAiChat(messages, contextDescription, images, optio
 
   const raw = await res.text()
   if (!res.ok) {
-    let detail = raw
-    try {
-      const j = JSON.parse(raw)
-      detail = j.error?.message || j.error || raw
-    } catch {
-      /* ignore */
-    }
-    throw new Error(
-      typeof detail === 'string' ? detail : `요청 실패 (${res.status})`,
-    )
+    throw new Error(parseApiError(raw, res.status))
   }
 
   let data
   try {
     data = JSON.parse(raw)
   } catch {
-    throw new Error('응답 파싱에 실패했습니다.')
+    throw new Error(parseApiError(raw, res.status))
   }
 
   const text = data.choices?.[0]?.message?.content?.trim()

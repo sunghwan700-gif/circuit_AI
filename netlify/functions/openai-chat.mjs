@@ -20,7 +20,10 @@ export const handler = async (event) => {
     }
   }
 
-  const result = await runGeminiChatProxy(body, process.env)
+  const result = await runGeminiChatProxy(body, {
+    ...process.env,
+    NETLIFY: 'true',
+  })
   return {
     statusCode: result.statusCode,
     headers: { 'Content-Type': 'application/json; charset=utf-8' },

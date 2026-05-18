@@ -1540,12 +1540,6 @@ function renderAiChatbot(contextDescription) {
   const inputEl = wrap.querySelector('.chat-input')
   const sendBtn = wrap.querySelector('.chat-send')
 
-  const hint = document.createElement('p')
-  hint.className = 'ai-chat__hint'
-  hint.innerHTML =
-    '회로도·실습 사진을 함께 분석합니다. 배포 환경에서는 응답 안정성을 위해 채팅은 <strong>Flash</strong>, 최종 보고서는 <strong>Pro</strong> 모델을 사용합니다. 분석 중에는 20~30초 기다려 주세요.'
-  messagesEl.before(hint)
-
   const starters = document.createElement('div')
   starters.className = 'ai-chat__starters'
   starters.setAttribute('aria-label', '질문 예시')

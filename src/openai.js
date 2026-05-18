@@ -17,9 +17,25 @@ function getChatApiUrl() {
  * @param {string} raw
  * @param {number} status
  */
+/** @param {unknown} err */
+export function normalizeChatFetchError(err) {
+  const msg = err instanceof Error ? err.message : String(err || '')
+  if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+    return '서버에 연결하지 못했습니다. npm run dev 가 실행 중인지 확인한 뒤 새로고침 후 다시 시도해 주세요.'
+  }
+  if (/no longer available|flash-lite/i.test(msg)) {
+    return 'AI 모델 설정을 업데이트 중입니다. 잠시 후 다시 시도해 주세요.'
+  }
+  return msg
+}
+
 function parseApiError(raw, status) {
   const text = String(raw || '').trim()
   if (!text) return `요청 실패 (${status})`
+
+  if (/no longer available|flash-lite|invalid model/i.test(text)) {
+    return 'AI 모델 연결에 문제가 있습니다. 잠시 후 다시 시도해 주세요.'
+  }
 
   if (
     /^\s*</.test(text) ||
@@ -211,7 +227,8 @@ export async function sendOpenAiChat(messages, contextDescription, images, optio
       if (!text) throw new Error('모델 응답이 비어 있습니다.')
       return text
     } catch (e) {
-      lastError = e instanceof Error ? e : new Error(String(e))
+      const normalized = normalizeChatFetchError(e)
+      lastError = new Error(normalized)
       const msg = lastError.message
       if (attempt >= maxAttempts - 1 || !isRetryableErrorMessage(msg)) {
         throw lastError

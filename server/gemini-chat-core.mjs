@@ -28,6 +28,33 @@ export async function runGeminiChatProxy(body, env) {
   }
 
   const normalizeModel = (m) => String(m || '').replace(/^models\//, '').trim()
+
+  /** 신규 API 키·계정에서 막힌 모델 (폴백 목록에서 제외) */
+  const isRetiredModel = (name) => {
+    const n = normalizeModel(name).toLowerCase()
+    if (!n) return true
+    if (/flash-lite|gemini-1\.0|gemini-pro(?!-)/i.test(n)) return true
+    if (
+      n === 'gemini-2.0-flash-lite' ||
+      n === 'gemini-1.5-flash-8b' ||
+      n === 'gemini-1.5-flash-8b-latest'
+    ) {
+      return true
+    }
+    return false
+  }
+
+  const dedupeModels = (list) => {
+    const out = []
+    const seen = new Set()
+    for (const raw of list) {
+      const m = normalizeModel(raw)
+      if (!m || isRetiredModel(m) || seen.has(m)) continue
+      seen.add(m)
+      out.push(m)
+    }
+    return out.length ? out : [defaultModel]
+  }
   const isNetlify = String(env.NETLIFY || '').toLowerCase() === 'true'
   const netlifyFast =
     isNetlify && String(env.GEMINI_NETLIFY_FAST ?? '1').trim() !== '0'
@@ -42,7 +69,6 @@ export async function runGeminiChatProxy(body, env) {
   )
   const chatModelEnv = normalizeModel(env.GEMINI_CHAT_MODEL || '')
 
-  // 기본은 flash 전용(pro는 과부하·타임아웃이 잦음). 정밀도는 시스템 프롬프트로 유지.
   const defaultModel = 'gemini-2.5-flash'
   let primaryModel
   if (isChatJob) {
@@ -55,23 +81,16 @@ export async function runGeminiChatProxy(body, env) {
 
   const useProPrimary = /pro/i.test(primaryModel)
 
-  const chatFallbackDefault =
-    'gemini-2.5-flash,gemini-2.0-flash,gemini-2.0-flash-lite'
-  const reportFallbackDefault = chatFallbackDefault
+  const chatFallbackDefault = 'gemini-2.5-flash,gemini-2.0-flash'
 
   const fallbackModels = String(
-    env.GEMINI_FALLBACK_MODELS ||
-      (isChatJob || isReportJob || netlifyFast
-        ? chatFallbackDefault
-        : `${defaultModel},gemini-2.0-flash,gemini-2.0-flash-lite`),
+    env.GEMINI_FALLBACK_MODELS || chatFallbackDefault,
   )
     .split(',')
     .map((s) => normalizeModel(s))
     .filter(Boolean)
 
-  let modelCandidates = Array.from(
-    new Set([primaryModel, ...fallbackModels]),
-  )
+  let modelCandidates = dedupeModels([primaryModel, ...fallbackModels])
   // flash 계열을 먼저 시도
   if (isChatJob || isReportJob || netlifyFast || !useProPrimary) {
     const flashFirst = modelCandidates.filter((m) => /flash/i.test(m))
@@ -335,6 +354,16 @@ ${
           break
         }
 
+        const modelUnavailable =
+          lastStatus === 404 ||
+          /no longer available|not found|is not supported|invalid model|NOT_FOUND/i.test(
+            lastMessage,
+          )
+
+        if (modelUnavailable) {
+          break
+        }
+
         const shouldRetry =
           lastStatus === 429 ||
           lastStatus === 503 ||
@@ -361,9 +390,14 @@ ${
         /high demand|overloaded|try again later|RESOURCE_EXHAUSTED|UNAVAILABLE/i.test(
           lastMessage,
         )
+      const modelGone = /no longer available|invalid model|not found/i.test(
+        lastMessage,
+      )
       const friendly = overloaded
         ? 'AI 서버가 잠시 바쁩니다. 10~20초 뒤에 같은 질문을 다시 보내 주세요. (사진이 많으면 회로도 1장만 첨부해 보세요.)'
-        : lastMessage
+        : modelGone
+          ? 'AI 모델 연결에 문제가 있습니다. 잠시 후 다시 시도해 주세요.'
+          : lastMessage
       return {
         ok: false,
         statusCode: lastStatus,

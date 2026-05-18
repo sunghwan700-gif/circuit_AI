@@ -62,12 +62,12 @@ export async function runGeminiChatProxy(body, env) {
     tokensParsed <= 8192
       ? Math.floor(tokensParsed)
       : netlifyFast
-        ? 2048
+        ? 4096
         : 6144
   const modelCandidatesRun = netlifyFast
     ? modelCandidates.slice(0, 1)
     : modelCandidates
-  const maxContinues = netlifyFast ? 0 : 4
+  const maxContinues = netlifyFast ? 2 : 4
   const retryDelaysMs = netlifyFast ? [400] : [250, 750, 1500]
 
   const imageList = Array.isArray(images) ? images : []
@@ -124,6 +124,12 @@ ${
 4) 점검/조치 순서 (체크리스트, 안전 포함)
 5) 추가 확인 질문 (필요 시)`
       : `이번 요청에는 분석용 이미지가 첨부되어 있지 않습니다. 위 '자료가 없으면 짧게' 규칙을 따르세요. 장문의 가상 점검 결과를 쓰지 마세요.`
+  }
+
+${
+    netlifyFast
+      ? `\n배포 환경: 각 항목은 2~4문장으로 간결히 쓰되, 형식(1~5)을 반드시 끝까지 완결하세요. 중간에 문장을 끊지 마세요.`
+      : ''
   }
 
 현재 실습 단계 맥락: ${contextDescription || ''}`
@@ -300,10 +306,24 @@ ${
       finishReason = first.finishReason || ''
     }
 
-    const needsContinue = (reason) =>
-      /MAX_TOKENS|FINISH_REASON_MAX_TOKENS/i.test(String(reason || ''))
+    const looksTruncated = (text) => {
+      const t = String(text || '').trim()
+      if (!t || t.length < 150) return false
+      if (/1\)\s*결론\s*요약/i.test(t) && !/5\)\s*추가/i.test(t)) return true
+      if (
+        t.length > 280 &&
+        !/[.!?。…』」\)]\s*$/.test(t) &&
+        /[가-힣0-9a-zA-Z(,（]\s*$/.test(t)
+      ) {
+        return true
+      }
+      return false
+    }
 
-    for (let i = 0; i < maxContinues && needsContinue(finishReason); i++) {
+    const needsContinue = (reason, text) =>
+      /MAX_TOKENS/i.test(String(reason || '')) || looksTruncated(text)
+
+    for (let i = 0; i < maxContinues && needsContinue(finishReason, out); i++) {
       contents.push({
         role: 'model',
         parts: [{ text: out.split('\n').slice(-40).join('\n') }],

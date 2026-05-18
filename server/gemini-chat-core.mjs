@@ -5,7 +5,8 @@
  * @returns {Promise<{ ok: true, body: string } | { ok: false, statusCode: number, body: string }>}
  */
 export async function runGeminiChatProxy(body, env) {
-  const { messages, contextDescription, images, skipRefine: skipRefineBody } = body || {}
+  const { messages, contextDescription, images, skipRefine: skipRefineBody } =
+    body || {}
 
   const key = (
     env.GEMINI_API_KEY ||
@@ -31,56 +32,65 @@ export async function runGeminiChatProxy(body, env) {
   const netlifyFast =
     isNetlify && String(env.GEMINI_NETLIFY_FAST ?? '1').trim() !== '0'
 
-  const primaryModel = normalizeModel(
-    env.GEMINI_MODEL ||
-      env.GOOGLE_MODEL ||
-      (netlifyFast ? 'gemini-2.5-flash' : 'gemini-2.5-pro'),
+  const explicitModel = normalizeModel(
+    env.GEMINI_MODEL || env.GOOGLE_MODEL || '',
   )
+  const primaryModel =
+    explicitModel ||
+    (netlifyFast ? 'gemini-2.5-flash' : 'gemini-2.5-pro')
+  const useProPrimary = /pro/i.test(primaryModel)
+
   const fallbackModels = String(
     env.GEMINI_FALLBACK_MODELS ||
-      (netlifyFast
-        ? 'gemini-2.5-flash,gemini-2.0-flash'
-        : 'gemini-2.5-pro,gemini-2.5-flash,gemini-3-flash-preview'),
+      (useProPrimary
+        ? 'gemini-2.5-flash'
+        : netlifyFast
+          ? 'gemini-2.5-flash,gemini-2.0-flash'
+          : 'gemini-2.5-pro,gemini-2.5-flash,gemini-3-flash-preview'),
   )
     .split(',')
     .map((s) => normalizeModel(s))
     .filter(Boolean)
+
   let modelCandidates = Array.from(
     new Set([primaryModel, ...fallbackModels]),
   )
-  if (netlifyFast) {
+  // 환경 변수로 pro를 지정했으면 flash를 앞에 두지 않음 (정밀 모드 우선)
+  if (netlifyFast && !useProPrimary) {
     const flashFirst = modelCandidates.filter((m) => /flash/i.test(m))
     const rest = modelCandidates.filter((m) => !/flash/i.test(m))
     modelCandidates = [...flashFirst, ...rest]
   }
 
-  /** Netlify Functions: 실행 시간·업로드 한도 안에 끝나도록 가벼운 설정 */
+  /** Netlify Functions: 실행 시간·업로드 한도. pro는 정밀 우선으로 토큰·이어쓰기 여유 */
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
   const maxOutputTokens =
     Number.isFinite(tokensParsed) &&
     tokensParsed >= 512 &&
     tokensParsed <= 8192
       ? Math.floor(tokensParsed)
-      : netlifyFast
+      : useProPrimary
         ? 4096
-        : 6144
+        : netlifyFast
+          ? 3584
+          : 6144
   const modelCandidatesRun = netlifyFast
     ? modelCandidates.slice(0, 2)
     : modelCandidates
-  const maxContinues = netlifyFast ? 2 : 4
-  const retryDelaysMs = netlifyFast ? [400] : [250, 750, 1500]
+  const maxContinues = useProPrimary ? 3 : netlifyFast ? 2 : 4
+  const retryDelaysMs = netlifyFast ? [400, 900] : [250, 750, 1500]
 
   const imageList = Array.isArray(images) ? images : []
   const hasImages = imageList.length > 0
 
-  if (netlifyFast && imageList.length > 3) {
+  if (netlifyFast && imageList.length > 4) {
     return {
       ok: false,
       statusCode: 413,
       body: JSON.stringify({
         error: {
           message:
-            '한 번에 보낼 이미지가 너무 많습니다. 회로도 1장과 실습 사진 1~2장만 포함해 다시 질문해 주세요.',
+            '한 번에 보낼 이미지가 너무 많습니다. 회로도 1장과 실습 사진 2~3장 이하로 줄여 다시 질문해 주세요.',
         },
       }),
     }
@@ -91,7 +101,7 @@ export async function runGeminiChatProxy(body, env) {
     const m = /^data:[^;]+;base64,(.+)$/i.exec(String(img?.dataUrl || ''))
     if (m) approxImageBytes += Math.ceil((m[1].length * 3) / 4)
   }
-  const maxImageBytes = netlifyFast ? 3_500_000 : 8_000_000
+  const maxImageBytes = netlifyFast ? 3_200_000 : 8_000_000
   if (approxImageBytes > maxImageBytes) {
     return {
       ok: false,
@@ -104,40 +114,56 @@ export async function runGeminiChatProxy(body, env) {
       }),
     }
   }
-  const systemContent = `당신은 전기 실습(회로·승강기·철도전기신호 등)을 돕는 조교입니다. 항상 한국어로 답합니다.
+  const systemContent = `당신은 전기 실습(회로·승강기·철도전기신호 등) 실습일지를 돕는 조교입니다. 항상 한국어로 답합니다.
 
-공통 원칙(가장 중요):
-- 환각 금지: 이미지에서 읽지 못한 단자 번호·배선·표기·측정값을 '확인했다'처럼 쓰지 마세요. 없는 사실을 만들어내지 마세요.
-- 근거 분리: 확인된 사실 / 추정(가정) / 모름 을 구분해 말하세요.
-- 자료가 없으면 짧게: 이번 요청에 분석용 회로도·실습 사진이 첨부되지 않았거나 대화에 구체적 내용이 없으면, 일반 안전 원칙과 '무엇을 올리면 다음에 구체적으로 도울 수 있는지'만 2~6문장으로 안내하세요. 구체 회로 진단을 꾸며 내지 마세요.
-- 불확실하면 질문: 핵심 정보가 부족하면 결론을 길게 내리지 말고 확인 질문 1~3개만 하세요.
-- 안전 우선: 감전·단락·과열 가능성이 거론되면 전원 차단을 먼저 말하세요.
+목표: 학습자가 실습 중 질문하고, 회로도·실습 사진을 근거로 정확한 피드백을 받도록 돕습니다.
+
+정확성(최우선 — 환각·오답 방지):
+- 이미지·대화에서 직접 확인한 사실만 '확인됨'으로 씁니다. 읽기 어렵거나 안 보이면 "판독 불가" 또는 "확인 필요"라고만 씁니다.
+- 단자 번호·배선 색·부품 모델·측정값·동작 상태를 추측으로 채우지 마세요. 근거 없는 문장은 쓰지 마세요.
+- 각 항목에서 핵심 주장 뒤에 (근거: ○○ 이미지/표기에서 확인) 형태로 출처를 짧게 붙이세요.
+- 회로도와 실습 사진이 함께 있으면 반드시 대조합니다. 불일치는 "도면 대비 ○○"처럼 구체적으로 적습니다.
+- 확실하지 않으면 결론을 단정하지 말고 확인 질문 1~3개를 제시합니다.
+
+학습자 수준:
+- 전기 초보자도 이해할 수 있게, 전문 용어는 처음에 괄호로 쉬운 뜻을 붙입니다.
+- 비난하지 않고, 실습에서 바로 할 수 있는 순서로 안내합니다.
+
+분량:
+- 불필요하게 길게 쓰지 않습니다. 각 번호 항목은 2~4문장(또는 짧은 목록)으로 씁니다.
+- 다만 1)~5) 형식은 빠짐없이 끝까지 완결합니다. 중간에 문장을 끊지 마세요.
+
+안전: 감전·단락·과열 가능성이 있으면 맨 앞에 전원 차단·LOCKOUT을 안내합니다.
 
 ${
     hasImages
-      ? `이번 요청에는 이미지가 포함되어 있습니다. 이미지에서 실제로 보이는 텍스트·단자·배선·표기를 근거로 정밀히 설명하세요.
+      ? `이번 요청에 회로도·실습 사진이 포함될 수 있습니다. 라벨·단자·기호·배선을 읽어 정밀히 분석하세요.
 
-답변 형식(근거가 충분할 때 위주로 유지, 근거가 부족하면 짧게 줄여도 됨):
-1) 결론 요약
-2) 관찰/근거 (이미지·대화에서 확인한 점만)
-3) 분석 (원인 후보는 근거가 있을 때만, 우선순위)
-4) 점검/조치 순서 (체크리스트, 안전 포함)
-5) 추가 확인 질문 (필요 시)`
-      : `이번 요청에는 분석용 이미지가 첨부되어 있지 않습니다. 위 '자료가 없으면 짧게' 규칙을 따르세요. 장문의 가상 점검 결과를 쓰지 마세요.`
-  }
-
-${
-    netlifyFast
-      ? `\n배포 환경: 각 항목은 2~4문장으로 간결히 쓰되, 형식(1~5)을 반드시 끝까지 완결하세요. 중간에 문장을 끊지 마세요.`
-      : ''
+답변 형식(반드시 1~5 모두 작성):
+1) 결론 요약 — 무엇을 하는 회로/실습인지, 지금 상태 한줄 평가
+2) 관찰/근거 — 이미지에서 확인한 표기·배선·부품만 (도면 vs 실물 대조 포함)
+3) 분석 — 원인·불일치 후보는 근거가 있을 때만, 우선순위
+4) 점검/조치 — 번호 목록(안전 순서), 학생이 지금 할 일
+5) 추가 확인 — 부족한 정보·추가 촬영이 필요하면 1~3개만`
+      : `분석용 이미지가 없습니다. 일반 안전·실습 원칙과, 구체 피드백을 위해 필요한 회로도/사진(촬영 방법 1문장씩)만 2~6문장으로 안내하세요. 가상의 회로 진단을 쓰지 마세요.`
   }
 
 현재 실습 단계 맥락: ${contextDescription || ''}`
 
   try {
-    const contents = (Array.isArray(messages) ? messages : []).map((m) => ({
+    const trimText = (s, max = 2400) => {
+      const t = String(s ?? '')
+      return t.length <= max ? t : `${t.slice(0, max)}\n…(이하 생략)`
+    }
+
+    let msgList = Array.isArray(messages) ? messages : []
+    if (netlifyFast && msgList.length > 12) {
+      msgList = msgList.slice(-12)
+    }
+
+    const contents = msgList.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: String(m.content ?? '') }],
+      parts: [{ text: trimText(m.content, netlifyFast ? 2800 : 4800) }],
     }))
 
     if (imageList.length) {
@@ -249,8 +275,8 @@ ${
             },
             contents: contentsToSend,
             generationConfig: {
-              temperature: 0.25,
-              topP: 0.9,
+              temperature: 0.12,
+              topP: 0.88,
               maxOutputTokens,
             },
           }),
@@ -355,7 +381,7 @@ ${
 
     const looksTruncated = (text) => {
       const t = String(text || '').trim()
-      if (!t || t.length < 150) return false
+      if (!t || t.length < 120) return false
       if (/1\)\s*결론\s*요약/i.test(t) && !/5\)\s*추가/i.test(t)) return true
       if (
         t.length > 280 &&

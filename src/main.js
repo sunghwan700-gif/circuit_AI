@@ -1238,6 +1238,12 @@ function mockAiReply(contextDescription) {
   return `[모의 응답] 지금은 API에 연결되지 않아 실제 분석을 할 수 없습니다. ${contextDescription} 단계에서는 회로도·실습 사진을 올리고 질문을 구체적으로 적으면 도움이 됩니다.`
 }
 
+function isDeployTight() {
+  return (
+    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
+  )
+}
+
 function aiInstructionForPage(contextDescription, hasImages = true) {
   const subject = String(state.data.subject || '').trim()
   const dept = String(state.data.dept || '').trim()
@@ -1261,6 +1267,9 @@ function aiInstructionForPage(contextDescription, hasImages = true) {
     : ''
 
   return `다음은 전기 실습 이미지 정밀 분석 요청입니다.
+정확성이 최우선입니다. 이미지·대화에 없는 사실은 쓰지 마세요. 확인한 내용만 쓰고, 각 주장에 (근거: ○○)를 붙이세요.
+회로도와 실습 사진이 모두 있으면 도면과 실물을 반드시 대조하세요.
+학습자는 전기 지식이 부족할 수 있습니다. 어려운 말은 쉽게 풀어서, 할 일 순서대로 안내하세요. 분량은 각 항목 2~4문장으로 짧게, 1)~5)는 모두 완결하세요.
 ${sparseBlock}
 맥락:
 - 단계: ${stage}
@@ -1323,13 +1332,11 @@ function buildPracticeContextForAi() {
 async function buildAiImagesForChat() {
   /** @type {{ dataUrl: string, label?: string }[]} */
   const images = []
-  const deployTight =
-    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' ||
-    import.meta.env.PROD === true
-  const circuitMaxW = deployTight ? 1280 : 2048
-  const circuitQuality = deployTight ? 0.76 : 0.9
-  const photoMaxW = deployTight ? 1200 : 1800
-  const photoQuality = deployTight ? 0.74 : 0.88
+  const deployTight = isDeployTight()
+  const circuitMaxW = deployTight ? 1408 : 2048
+  const circuitQuality = deployTight ? 0.8 : 0.9
+  const photoMaxW = deployTight ? 1280 : 1800
+  const photoQuality = deployTight ? 0.76 : 0.88
   const photoMax = deployTight ? 2 : 4
 
   // 회로도는 모든 단계에서 가장 중요한 기준이므로 항상(있으면) 포함
@@ -1344,7 +1351,7 @@ async function buildAiImagesForChat() {
     })
   }
 
-  // 단계별로 관련 사진은 "최근 N장"을 포함 (페이로드 과대 방지)
+  // 단계별로 관련 실습 사진(최근 N장) — 도면 대비·배선 피드백에 필요
   if (state.page === 3) {
     const recent = takeLastFiles(state.data.processImgs, photoMax)
     for (let i = 0; i < recent.length; i++) {
@@ -1401,13 +1408,13 @@ async function sendChatMessage(
     const images = await buildAiImagesForChat()
     const hasImages = images.length > 0
     const instruction = `${aiInstructionForPage(contextDescription, hasImages)}\n${buildPracticeContextForAi()}`
-    // UI에 보이는 대화(state.messages)는 유지하고, AI 요청에만 정밀 분석 지시문을 앞에 추가
     const messagesForAi = [
       { role: 'user', content: instruction },
-      ...trimMessagesForApi(state.messages),
+      ...trimMessagesForApi(state.messages, 12),
     ]
     const reply = await sendOpenAiChat(messagesForAi, contextDescription, images, {
       skipRefine: true,
+      maxAttempts: 3,
     })
     state.messages.push({ role: 'assistant', content: reply })
   } catch (e) {
@@ -1418,7 +1425,7 @@ async function sendChatMessage(
       /insufficient[_\s-]?quota/i.test(msg) ||
       /billing/i.test(msg)
     const isTimeoutError =
-      /Inactivity Timeout|응답 시간이 초과|일시적으로 응답하지 않|서버 한도/i.test(
+      /Inactivity Timeout|응답 시간이 초과|일시적으로 응답하지 않|서버 한도|빈 응답/i.test(
         msg,
       )
     state.messages.push({
@@ -1426,7 +1433,7 @@ async function sendChatMessage(
       content: isQuotaError
         ? `현재 OpenAI API 쿼터(크레딧)가 부족해 실시간 응답을 받을 수 없습니다.\n\n대신 모의 응답으로 계속 진행합니다.\n\n(해결: OpenAI 콘솔에서 결제/크레딧을 확인하고 .env의 OPENAI_API_KEY 설정 후 dev 서버를 재시작하세요.)`
         : isTimeoutError
-          ? `${msg}\n\n팁: 회로도 1장만 올린 상태에서 짧게 질문하거나, 10~20초 뒤 다시 시도해 보세요.`
+          ? `${msg}\n\n(자동 재시도 후에도 실패했습니다. 2~3페이지에서 회로도 1장만 올리고 예시 질문 버튼을 눌러 보세요.)`
           : `오류: ${msg}`,
     })
     if (isQuotaError) {
@@ -1507,7 +1514,7 @@ function renderAiChatbot(contextDescription) {
     <div class="chat-messages" aria-live="polite"></div>
     <div class="ai-chat__footer">
       <div class="chat-input-row">
-        <input type="text" class="chat-input" placeholder="회로도나 실습 내용에 대해 질문하세요." autocomplete="off" />
+        <input type="text" class="chat-input" placeholder="예: 이 회로 쉽게 설명해줘 (회로도 업로드 후)" autocomplete="off" />
         <button type="button" class="btn btn--primary chat-send">전송</button>
       </div>
     </div>
@@ -1515,12 +1522,42 @@ function renderAiChatbot(contextDescription) {
   const messagesEl = wrap.querySelector('.chat-messages')
   const inputEl = wrap.querySelector('.chat-input')
   const sendBtn = wrap.querySelector('.chat-send')
+
+  const hint = document.createElement('p')
+  hint.className = 'ai-chat__hint'
+  hint.innerHTML =
+    '회로도와 실습 사진을 올리면 <strong>도면·실물을 대조</strong>해 피드백합니다. 확인된 내용만 답하도록 설정되어 있습니다. (3~4페이지 실습 사진도 채팅에 포함됩니다.)'
+  messagesEl.before(hint)
+
+  const starters = document.createElement('div')
+  starters.className = 'ai-chat__starters'
+  starters.setAttribute('aria-label', '질문 예시')
+  ;[
+    '회로도와 실습 사진 비교해서 오결선 후보 알려줘',
+    '지금 배선 상태 점검 순서 알려줘',
+    '안전하게 확인할 항목만 짧게 정리해줘',
+  ].forEach((q) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'btn btn--chip ai-chat__starter'
+    b.textContent = q
+    starters.appendChild(b)
+  })
+  messagesEl.before(starters)
+
   renderChatMessages(messagesEl)
   const submit = () =>
     sendChatMessage(contextDescription, inputEl, messagesEl, sendBtn)
   sendBtn.addEventListener('click', submit)
   inputEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) submit()
+  })
+  starters.querySelectorAll('.ai-chat__starter').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      inputEl.value = btn.textContent?.trim() || ''
+      inputEl.focus()
+      submit()
+    })
   })
   return wrap
 }

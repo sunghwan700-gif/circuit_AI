@@ -65,7 +65,7 @@ export async function runGeminiChatProxy(body, env) {
         ? 4096
         : 6144
   const modelCandidatesRun = netlifyFast
-    ? modelCandidates.slice(0, 1)
+    ? modelCandidates.slice(0, 2)
     : modelCandidates
   const maxContinues = netlifyFast ? 2 : 4
   const retryDelaysMs = netlifyFast ? [400] : [250, 750, 1500]
@@ -190,13 +190,24 @@ ${
     let rawText = ''
     let usedModel = ''
 
+    const stripInlineImagesFromContents = (contentsArr) =>
+      contentsArr.map((turn) => ({
+        role: turn.role,
+        parts: (turn.parts || []).filter((p) => !p.inlineData),
+      }))
+
     const extractTextAndFinish = (raw) => {
       let data
       try {
         data = JSON.parse(raw)
       } catch {
-        return { text: '', finishReason: '' }
+        return { text: '', finishReason: '', blocked: false }
       }
+      const blockReason = String(
+        data.promptFeedback?.blockReason ||
+          data.candidates?.[0]?.finishMessage ||
+          '',
+      ).trim()
       const parts = data.candidates?.[0]?.content?.parts
       const text = Array.isArray(parts)
         ? parts
@@ -205,7 +216,19 @@ ${
             .trim()
         : ''
       const finishReason = String(data.candidates?.[0]?.finishReason || '').trim()
-      return { text, finishReason }
+      const blocked =
+        !!blockReason ||
+        finishReason === 'SAFETY' ||
+        finishReason === 'RECITATION' ||
+        (!text && !data.candidates?.length)
+      return { text, finishReason, blocked, blockReason }
+    }
+
+    const blockedMessage = (blockReason, finishReason) => {
+      if (/SAFETY|RECITATION|BLOCK/i.test(`${blockReason} ${finishReason}`)) {
+        return '안전·정책 필터로 이 답변을 생성할 수 없습니다. 질문을 다르게 표현하거나, 회로도만 첨부해 다시 시도해 주세요.'
+      }
+      return '모델이 답변을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.'
     }
 
     const callGemini = async (model, contentsToSend) => {
@@ -302,8 +325,32 @@ ${
     let finishReason = ''
     {
       const first = extractTextAndFinish(rawText)
+      if (first.blocked && !first.text) {
+        return {
+          ok: false,
+          statusCode: 422,
+          body: JSON.stringify({
+            error: {
+              message: blockedMessage(first.blockReason, first.finishReason),
+            },
+          }),
+        }
+      }
       out = first.text || ''
       finishReason = first.finishReason || ''
+    }
+
+    if (!out.trim()) {
+      return {
+        ok: false,
+        statusCode: 502,
+        body: JSON.stringify({
+          error: {
+            message:
+              'AI가 빈 응답을 반환했습니다. 잠시 후 다시 시도하거나, 회로도 1장만 올린 뒤 질문해 주세요.',
+          },
+        }),
+      }
     }
 
     const looksTruncated = (text) => {
@@ -338,13 +385,20 @@ ${
         ],
       })
 
-      const r2 = await callGemini(usedModel || modelCandidatesRun[0], contents)
+      const r2 = await callGemini(
+        usedModel || modelCandidatesRun[0],
+        stripInlineImagesFromContents(contents),
+      )
       const raw2 = await r2.text()
       if (!r2.ok) break
       const next = extractTextAndFinish(raw2)
       const chunk = next.text || ''
       if (chunk) out = `${out}\n${chunk}`.trim()
       finishReason = next.finishReason || ''
+    }
+
+    if (looksTruncated(out)) {
+      out = `${out}\n\n(답변이 길어 여기서 끊겼을 수 있습니다. 채팅에 「이어서 작성해줘」라고 입력하면 나머지를 이어 받을 수 있습니다.)`
     }
 
     const refineOptOut =
@@ -395,17 +449,34 @@ ${out}`
       }
     }
 
+    if (!out.trim()) {
+      return {
+        ok: false,
+        statusCode: 502,
+        body: JSON.stringify({
+          error: {
+            message:
+              'AI가 빈 응답을 반환했습니다. 잠시 후 다시 시도해 주세요.',
+          },
+        }),
+      }
+    }
+
     return {
       ok: true,
       statusCode: 200,
       body: JSON.stringify({ choices: [{ message: { content: out } }] }),
     }
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    const friendly = /abort|timeout|timed out|ETIMEDOUT|ECONNRESET/i.test(msg)
+      ? '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
+      : msg
     return {
       ok: false,
       statusCode: 500,
       body: JSON.stringify({
-        error: { message: e instanceof Error ? e.message : String(e) },
+        error: { message: friendly },
       }),
     }
   }

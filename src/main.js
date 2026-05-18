@@ -1290,6 +1290,13 @@ function takeLastFiles(files, n) {
   return arr.slice(Math.max(0, arr.length - n))
 }
 
+/** API 전송용: 최근 대화만 포함해 페이로드·타임아웃 방지 */
+function trimMessagesForApi(messages, maxMessages = 14) {
+  const arr = Array.isArray(messages) ? messages : []
+  if (arr.length <= maxMessages) return arr
+  return arr.slice(-maxMessages)
+}
+
 function buildPracticeContextForAi() {
   const d = state.data || {}
   const materialCounts = d.materialCounts || {}
@@ -1397,7 +1404,7 @@ async function sendChatMessage(
     // UI에 보이는 대화(state.messages)는 유지하고, AI 요청에만 정밀 분석 지시문을 앞에 추가
     const messagesForAi = [
       { role: 'user', content: instruction },
-      ...state.messages,
+      ...trimMessagesForApi(state.messages),
     ]
     const reply = await sendOpenAiChat(messagesForAi, contextDescription, images, {
       skipRefine: true,
@@ -1411,13 +1418,15 @@ async function sendChatMessage(
       /insufficient[_\s-]?quota/i.test(msg) ||
       /billing/i.test(msg)
     const isTimeoutError =
-      /Inactivity Timeout|응답 시간이 초과|일시적으로 응답하지 않/i.test(msg)
+      /Inactivity Timeout|응답 시간이 초과|일시적으로 응답하지 않|서버 한도/i.test(
+        msg,
+      )
     state.messages.push({
       role: 'assistant',
       content: isQuotaError
         ? `현재 OpenAI API 쿼터(크레딧)가 부족해 실시간 응답을 받을 수 없습니다.\n\n대신 모의 응답으로 계속 진행합니다.\n\n(해결: OpenAI 콘솔에서 결제/크레딧을 확인하고 .env의 OPENAI_API_KEY 설정 후 dev 서버를 재시작하세요.)`
         : isTimeoutError
-          ? msg
+          ? `${msg}\n\n팁: 회로도 1장만 올린 상태에서 짧게 질문하거나, 10~20초 뒤 다시 시도해 보세요.`
           : `오류: ${msg}`,
     })
     if (isQuotaError) {

@@ -25,8 +25,12 @@ function parseApiError(raw, status) {
     return '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요. (회로도·사진이 크면 한 장만 올린 뒤 질문해 보세요.)'
   }
 
-  if (status === 504 || status === 502 || status === 503) {
-    return 'AI 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해 주세요.'
+  if (
+    /timed?\s*out|execution timed out|function invocation|deadline exceeded/i.test(
+      text,
+    )
+  ) {
+    return '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요. (회로도 1장만 올린 뒤 질문하면 더 안정적입니다.)'
   }
 
   try {
@@ -35,6 +39,10 @@ function parseApiError(raw, status) {
     if (typeof detail === 'string' && detail.trim()) return detail.trim()
   } catch {
     /* ignore */
+  }
+
+  if (status === 504 || status === 502 || status === 503) {
+    return 'AI 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해 주세요.'
   }
 
   if (text.length > 280) {
@@ -52,10 +60,23 @@ function parseApiError(raw, status) {
 export async function sendOpenAiChat(messages, contextDescription, images, options) {
   const body = { messages, contextDescription, images }
   if (options?.skipRefine) body.skipRefine = true
+  let bodyJson
+  try {
+    bodyJson = JSON.stringify(body)
+  } catch {
+    throw new Error(
+      '대화·이미지 데이터가 너무 큽니다. 사진 수를 줄이거나 페이지를 새로고침한 뒤 다시 시도해 주세요.',
+    )
+  }
+  if (bodyJson.length > 5_500_000) {
+    throw new Error(
+      '이미지·대화 내용이 서버 한도(약 5MB)를 넘었습니다. 회로도 1장만 올린 뒤 다시 질문해 주세요.',
+    )
+  }
   const res = await fetch('/api/openai/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: bodyJson,
   })
 
   const raw = await res.text()

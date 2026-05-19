@@ -1858,8 +1858,8 @@ code {
 .materials-list {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px 12px;
   max-height: 420px;
   overflow: auto;
   padding: 10px;
@@ -1868,7 +1868,13 @@ code {
   background: color-mix(in srgb, var(--bg-elevated) 82%, var(--code-bg));
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
+  .materials-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
   .materials-list {
     grid-template-columns: 1fr;
     max-height: 480px;
@@ -1879,27 +1885,31 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
 }
 
 .materials-name {
-  font-size: 26px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 20px;
   color: var(--text-h);
   font-weight: 600;
   text-align: left;
-  line-height: 1.3;
+  line-height: 1.25;
 }
 
 .materials-qty {
-  width: 148px;
-  font-size: 28px;
+  width: min(120px, 40%);
+  min-width: 56px;
+  flex-shrink: 0;
+  font-size: 22px;
   font-weight: 600;
   text-align: right;
-  padding: 10px 14px;
+  padding: 8px 10px;
 }
 
 .divider {

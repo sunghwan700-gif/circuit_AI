@@ -7,6 +7,8 @@
   VITE_SUBMISSIONS_SAME_ORIGIN = "true"
   # 배포 환경: AI 채팅 이미지·페이로드를 Functions 한도에 맞게 축소
   VITE_NETLIFY_DEPLOY = "true"
+  # Pro 채팅 시 클라이언트 이미지 압축 강화 (빌드에 포함)
+  VITE_GEMINI_CHAT_MODEL = "gemini-2.5-pro"
 
 [functions]
   node_bundler = "esbuild"

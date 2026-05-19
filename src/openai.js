@@ -186,6 +186,13 @@ async function sendOpenAiChatStreaming(
     }
     if (ev.event === 'done' && ev.text) {
       resultText = String(ev.text)
+      if (ev.model && options?.onStatus) {
+        options.onStatus(
+          /pro/i.test(String(ev.model))
+            ? 'Pro 분석 완료'
+            : '답변 완료 (안정 모드)',
+        )
+      }
     }
   })
 

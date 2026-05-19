@@ -1255,6 +1255,15 @@ function isDeployTight() {
   )
 }
 
+function isProChatConfigured() {
+  const m = String(
+    import.meta.env.VITE_GEMINI_CHAT_MODEL ||
+      import.meta.env.VITE_GEMINI_MODEL ||
+      '',
+  ).toLowerCase()
+  return /pro/.test(m)
+}
+
 function aiInstructionForPage(contextDescription, hasImages = true) {
   const subject = String(state.data.subject || '').trim()
   const dept = String(state.data.dept || '').trim()
@@ -1346,11 +1355,12 @@ async function buildAiImagesForChat() {
   /** @type {{ dataUrl: string, label?: string }[]} */
   const images = []
   const deployTight = isDeployTight()
-  const circuitMaxW = deployTight ? 1408 : 2048
-  const circuitQuality = deployTight ? 0.8 : 0.9
-  const photoMaxW = deployTight ? 1280 : 1800
-  const photoQuality = deployTight ? 0.76 : 0.88
-  const photoMax = deployTight ? 2 : 4
+  const proTight = deployTight && isProChatConfigured()
+  const circuitMaxW = proTight ? 1280 : deployTight ? 1408 : 2048
+  const circuitQuality = proTight ? 0.72 : deployTight ? 0.8 : 0.9
+  const photoMaxW = proTight ? 1120 : deployTight ? 1280 : 1800
+  const photoQuality = proTight ? 0.7 : deployTight ? 0.76 : 0.88
+  const photoMax = proTight ? 1 : deployTight ? 2 : 4
 
   // 회로도는 모든 단계에서 가장 중요한 기준이므로 항상(있으면) 포함
   if (state.data.circuitImg) {

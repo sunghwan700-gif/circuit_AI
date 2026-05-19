@@ -1344,7 +1344,7 @@ async function buildAiImagesForChat() {
   const circuitQuality = proTight ? 0.72 : deployTight ? 0.8 : 0.9
   const photoMaxW = proTight ? 1120 : deployTight ? 1280 : 1800
   const photoQuality = proTight ? 0.7 : deployTight ? 0.76 : 0.88
-  const photoMax = proTight ? 1 : deployTight ? 2 : 4
+  const photoMax = deployTight ? 1 : 4
 
   // 회로도는 모든 단계에서 가장 중요한 기준이므로 항상(있으면) 포함
   if (state.data.circuitImg) {
@@ -1439,7 +1439,7 @@ async function sendChatMessage(
       role: 'assistant',
       content: isQuotaError
         ? `현재 API 쿼터가 부족합니다. OpenAI/Gemini 결제·크레딧을 확인해 주세요.\n\n${mockAiReply(contextDescription)}`
-        : `오류: ${msg}\n\n같은 질문을 한 번 더 보내 보세요. 회로도 1장만 올리면 더 안정적입니다.`,
+        : `오류: ${msg}\n\n잠시 뒤 같은 질문을 다시 보내 주세요. (회로도 1장만 올리면 더 잘 됩니다.)`,
     })
   } finally {
     sendBtn.disabled = false

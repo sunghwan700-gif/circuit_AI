@@ -101,19 +101,19 @@ export async function runGeminiChatProxy(body, env) {
     .map((s) => normalizeModel(s))
     .filter(Boolean)
 
+  /** Netlify 동기(26초) Pro만 축소. Background 작업(GEMINI_BG_JOB)은 제한 없음 */
+  const isBgJob = String(env.GEMINI_BG_JOB || '').trim() === '1'
+
   let modelCandidates = dedupeModels([primaryModel, ...fallbackModels])
-  if (useProPrimary) {
+  if (useProPrimary || isBgJob) {
     const proFirst = modelCandidates.filter((m) => /pro/i.test(m))
     const rest = modelCandidates.filter((m) => !/pro/i.test(m))
     modelCandidates = [...proFirst, ...rest]
-  } else if (isChatJob || isReportJob || netlifyFast) {
+  } else if ((isChatJob || isReportJob) && netlifyFast) {
     const flashFirst = modelCandidates.filter((m) => /flash/i.test(m))
     const rest = modelCandidates.filter((m) => !/flash/i.test(m))
     modelCandidates = [...flashFirst, ...rest]
   }
-
-  /** Netlify 동기(26초) Pro만 축소. Background 작업(GEMINI_BG_JOB)은 제한 없음 */
-  const isBgJob = String(env.GEMINI_BG_JOB || '').trim() === '1'
   const netlifyProSafe =
     isNetlify && useProPrimary && !isBgJob && preferFlashBody !== true
 
@@ -136,27 +136,32 @@ export async function runGeminiChatProxy(body, env) {
       ? Math.floor(tokensParsed)
       : defaultMaxTokens
 
-  const modelCandidatesRun = netlifyFast
-    ? modelCandidates.slice(0, useProPrimary ? 3 : 2)
-    : modelCandidates
+  const modelCandidatesRun =
+    netlifyFast && !isBgJob
+      ? modelCandidates.slice(0, useProPrimary ? 3 : 2)
+      : modelCandidates
 
   const maxContinues =
     netlifyProSafe && isChatJob
       ? 0
-      : isNetlify && isChatJob
-        ? 1
-        : useProPrimary
-          ? netlifyProSafe
-            ? 0
-            : 3
-          : netlifyFast
-            ? 2
-            : 4
-  const retryDelaysMs = netlifyProSafe
-    ? [300, 700]
-    : netlifyFast
-      ? [400, 900]
-      : [250, 750, 1500]
+      : isBgJob && isChatJob
+        ? 2
+        : isNetlify && isChatJob
+          ? 1
+          : useProPrimary
+            ? netlifyProSafe
+              ? 0
+              : 3
+            : netlifyFast
+              ? 2
+              : 4
+  const retryDelaysMs = isBgJob
+    ? [700, 1500, 3000, 5000, 8000]
+    : netlifyProSafe
+      ? [300, 700, 1200]
+      : netlifyFast
+        ? [400, 900, 1800]
+        : [250, 750, 1500, 3000]
 
   const fetchTimeoutParsed = Number(String(env.GEMINI_FETCH_TIMEOUT_MS || '').trim())
   const geminiFetchTimeoutMs =

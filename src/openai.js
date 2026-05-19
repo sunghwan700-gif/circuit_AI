@@ -83,6 +83,36 @@ function parseApiError(raw, status) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+function isTransientChatError(err) {
+  const msg = (
+    err instanceof Error ? err.message : String(err || '')
+  ).toLowerCase()
+  return (
+    /바쁘|일시적|overloaded|unavailable|resource_exhausted|high demand|try again|503|502|504|429|timeout|timed out|빈 응답|empty|연결이 끊|분석이 아직|실패했습니다/.test(
+      msg,
+    ) && !/quota|billing|api key|키가 설정|invalid.*key/i.test(msg)
+  )
+}
+
+async function withAutoRetry(task, options, maxAttempts = 3) {
+  let lastErr
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      if (i > 0) {
+        options?.onStatus?.(
+          `잠시 기다린 뒤 다시 시도합니다… (${i + 1}/${maxAttempts})`,
+        )
+        await sleep(5000 * i)
+      }
+      return await task()
+    } catch (e) {
+      lastErr = e
+      if (!isTransientChatError(e) || i >= maxAttempts - 1) throw e
+    }
+  }
+  throw lastErr
+}
+
 async function triggerBackgroundWorker(jobId, requestBody) {
   const urls = getBackgroundTriggerUrls()
   if (!urls.length || !jobId) return false
@@ -308,14 +338,15 @@ export async function sendOpenAiChat(
     hasImages: options.hasImages,
   }
 
-  if (useAiChatBackground()) {
-    return await sendOpenAiChatViaBackgroundJob(apiBody, options)
-  }
-
-  return await sendOpenAiChatStreaming(
-    messages,
-    contextDescription,
-    images,
-    options,
-  )
+  return await withAutoRetry(async () => {
+    if (useAiChatBackground()) {
+      return await sendOpenAiChatViaBackgroundJob(apiBody, options)
+    }
+    return await sendOpenAiChatStreaming(
+      messages,
+      contextDescription,
+      images,
+      options,
+    )
+  }, options)
 }

@@ -115,7 +115,7 @@ export async function runGeminiChatProxy(body, env) {
   const defaultMaxTokens = useProPrimary
     ? netlifyProSafe
       ? isChatJob
-        ? 1536
+        ? 2048
         : 2560
       : isChatJob
         ? 2048
@@ -333,6 +333,8 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
     let lastMessage = '요청에 실패했습니다.'
     let rawText = ''
     let usedModel = ''
+    let out = ''
+    let finishReason = ''
 
     const stripInlineImagesFromContents = (contentsArr) =>
       contentsArr.map((turn) => ({
@@ -355,6 +357,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       const parts = data.candidates?.[0]?.content?.parts
       const text = Array.isArray(parts)
         ? parts
+            .filter((p) => p && p.thought !== true)
             .map((p) => (typeof p?.text === 'string' ? p.text : ''))
             .join('')
             .trim()
@@ -405,15 +408,53 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       )
     }
 
-    for (const model of modelCandidatesRun) {
+    const tryParseResponse = (raw, modelName) => {
+      const parsed = extractTextAndFinish(raw)
+      if (parsed.blocked && !parsed.text) {
+        return {
+          ok: false,
+          blocked: true,
+          message: blockedMessage(parsed.blockReason, parsed.finishReason),
+        }
+      }
+      if (parsed.text.trim()) {
+        return {
+          ok: true,
+          text: parsed.text,
+          finishReason: parsed.finishReason,
+          model: modelName,
+        }
+      }
+      return { ok: false, blocked: false, empty: true }
+    }
+
+    modelLoop: for (const model of modelCandidatesRun) {
       for (let attempt = 0; attempt < backoffMs.length + 1; attempt++) {
         const r = await callGemini(model, contents)
-
         rawText = await r.text()
+
         if (r.ok) {
-          lastStatus = 200
-          lastMessage = ''
-          usedModel = model
+          const hit = tryParseResponse(rawText, model)
+          if (hit.ok && hit.text) {
+            out = hit.text
+            finishReason = hit.finishReason || ''
+            usedModel = hit.model || model
+            lastStatus = 200
+            break modelLoop
+          }
+          if (hit.blocked) {
+            return {
+              ok: false,
+              statusCode: 422,
+              body: JSON.stringify({ error: { message: hit.message } }),
+            }
+          }
+          lastStatus = 502
+          lastMessage = 'empty_response'
+          if (attempt < backoffMs.length) {
+            await sleep(backoffMs[attempt])
+            continue
+          }
           break
         }
 
@@ -460,8 +501,43 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
 
         break
       }
+    }
 
-      if (lastStatus === 200) break
+    if (!out.trim() && imageList.length && isChatJob) {
+      const textContents = stripInlineImagesFromContents(contents)
+      const lastIdx = textContents.length - 1
+      if (lastIdx >= 0 && textContents[lastIdx]?.role === 'user') {
+        textContents[lastIdx].parts = [
+          ...(textContents[lastIdx].parts || []).filter((p) => !p.inlineData),
+          {
+            text: '\n(이미지 분석이 비어 다시 시도합니다. 질문에 맞게 짧게 답하세요.)',
+          },
+        ]
+      }
+      const flashFallback = dedupeModels([
+        'gemini-2.5-flash',
+        ...modelCandidatesRun,
+      ]).filter((m) => !/pro/i.test(m))
+      for (const model of flashFallback.slice(0, 2)) {
+        const r = await callGemini(model, textContents)
+        rawText = await r.text()
+        if (!r.ok) continue
+        const hit = tryParseResponse(rawText, model)
+        if (hit.ok && hit.text) {
+          out = hit.text
+          finishReason = hit.finishReason || ''
+          usedModel = hit.model || model
+          lastStatus = 200
+          break
+        }
+        if (hit.blocked) {
+          return {
+            ok: false,
+            statusCode: 422,
+            body: JSON.stringify({ error: { message: hit.message } }),
+          }
+        }
+      }
     }
 
     if (lastStatus !== 200) {
@@ -486,25 +562,6 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       }
     }
 
-    let out = ''
-    let finishReason = ''
-    {
-      const first = extractTextAndFinish(rawText)
-      if (first.blocked && !first.text) {
-        return {
-          ok: false,
-          statusCode: 422,
-          body: JSON.stringify({
-            error: {
-              message: blockedMessage(first.blockReason, first.finishReason),
-            },
-          }),
-        }
-      }
-      out = first.text || ''
-      finishReason = first.finishReason || ''
-    }
-
     if (!out.trim()) {
       return {
         ok: false,
@@ -512,7 +569,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
         body: JSON.stringify({
           error: {
             message:
-              'AI가 빈 응답을 반환했습니다. 잠시 후 다시 시도하거나, 회로도 1장만 올린 뒤 질문해 주세요.',
+              'AI가 답변을 만들지 못했습니다. 10초 뒤 같은 질문을 다시 보내 주세요. (사진이 많으면 회로도 1장만 첨부해 보세요.)',
           },
         }),
       }

@@ -72,7 +72,7 @@ function parseApiError(raw, status) {
 
 /** @param {string} msg */
 function isRetryableErrorMessage(msg) {
-  return /일시적|502|503|504|과부하|빈 응답/i.test(msg)
+  return /일시적|502|503|504|과부하|빈 응답|답변을 만들지 못했습니다/i.test(msg)
 }
 
 function getChatClientTimeoutMs() {
@@ -197,7 +197,9 @@ async function sendOpenAiChatStreaming(
   })
 
   if (!resultText.trim()) {
-    throw new Error('모델 응답이 비어 있습니다.')
+    throw new Error(
+      'AI가 답변을 만들지 못했습니다. 잠시 후 같은 질문을 다시 보내 주세요.',
+    )
   }
   return resultText.trim()
 }

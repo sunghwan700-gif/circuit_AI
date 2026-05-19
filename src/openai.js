@@ -1,7 +1,5 @@
 /**
- * AI 프록시 사용 가능 여부.
- * - 로컬: Vite dev 서버가 /api/openai/chat 을 처리합니다.
- * - Netlify: Function (스트리밍·heartbeat) 또는 Background + 폴링(Pro)
+ * AI 채팅 — 로컬: Pro 스트리밍(긴 대기) / 배포: Background 작업 + 폴링
  */
 export function isOpenAiProxyAvailable() {
   return true
@@ -15,76 +13,35 @@ function getChatJobApiUrl() {
   return '/api/openai/chat/job'
 }
 
-/** 로컬은 Vite가 POST 시 바로 처리. 배포만 Background Function 호출 */
-function getBackgroundTriggerUrl() {
-  if (import.meta.env.DEV && import.meta.env.VITE_NETLIFY_DEPLOY !== 'true') {
-    return ''
-  }
-  return '/api/openai/chat/background'
-}
-
-async function triggerBackgroundWorker(jobId, requestBody) {
-  const url = getBackgroundTriggerUrl()
-  if (!url) return
-
-  const payload = JSON.stringify({ jobId, request: requestBody })
-  const post = () =>
-    fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body: payload,
-    })
-
-  try {
-    const r = await post()
-    if (r.status === 202 || r.ok) return
-  } catch {
-    /* retry */
-  }
-  await sleep(600)
-  try {
-    await post()
-  } catch {
-    /* poll 단계에서 pending 지속 시 재시도 */
-  }
-}
-
-function shouldFallbackFromBackground(err) {
-  const msg = err instanceof Error ? err.message : String(err || '')
-  return /일시적으로 응답|502|503|504|작업을 시작|작업 ID|연결하지 못|Background trigger/i.test(
-    msg,
+function isNetlifyProduction() {
+  return (
+    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
   )
 }
 
-/** Pro 채팅: Netlify Background(배포) 또는 로컬 job API로 26초 한도 우회 */
+/** 배포(Pro)에서만 Background — 로컬 npm run dev 는 스트리밍 */
 export function useAiChatBackground() {
+  if (!isNetlifyProduction()) return false
   if (import.meta.env.VITE_AI_CHAT_BACKGROUND === 'false') return false
+  if (import.meta.env.VITE_AI_CHAT_BACKGROUND === 'true') return true
   const m = String(
     import.meta.env.VITE_GEMINI_CHAT_MODEL ||
       import.meta.env.VITE_GEMINI_MODEL ||
       '',
   ).toLowerCase()
-  const wantsPro = /pro/.test(m)
-  if (import.meta.env.VITE_AI_CHAT_BACKGROUND === 'true') {
-    return wantsPro || import.meta.env.PROD === true
-  }
-  const deploy =
-    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
-  return deploy && wantsPro
+  return /pro/.test(m)
 }
 
-/**
- * @param {string} raw
- * @param {number} status
- */
+function getBackgroundTriggerUrls() {
+  if (!isNetlifyProduction()) return []
+  return ['/api/openai/chat/background', '/.netlify/functions/openai-chat-background']
+}
+
 /** @param {unknown} err */
 export function normalizeChatFetchError(err) {
   const msg = err instanceof Error ? err.message : String(err || '')
-  if (/failed to fetch|networkerror|load failed/i.test(msg)) {
-    return '서버에 연결하지 못했습니다. npm run dev 가 실행 중인지 확인한 뒤 새로고침 후 다시 시도해 주세요.'
-  }
-  if (/no longer available|flash-lite/i.test(msg)) {
-    return 'AI 모델 설정을 업데이트 중입니다. 잠시 후 다시 시도해 주세요.'
+  if (/failed to fetch|networkerror|load failed|aborterror/i.test(msg)) {
+    return '서버에 연결하지 못했습니다. 새로고침 후 다시 시도해 주세요.'
   }
   return msg
 }
@@ -92,27 +49,6 @@ export function normalizeChatFetchError(err) {
 function parseApiError(raw, status) {
   const text = String(raw || '').trim()
   if (!text) return `요청 실패 (${status})`
-
-  if (/no longer available|flash-lite|invalid model/i.test(text)) {
-    return 'AI 모델 연결에 문제가 있습니다. 잠시 후 다시 시도해 주세요.'
-  }
-
-  if (
-    /^\s*</.test(text) ||
-    /<TITLE>\s*Inactivity Timeout\s*<\/TITLE>/i.test(text) ||
-    /Inactivity Timeout/i.test(text) ||
-    /Too much time has passed without sending any data/i.test(text)
-  ) {
-    return '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
-  }
-
-  if (
-    /timed?\s*out|execution timed out|function invocation|deadline exceeded/i.test(
-      text,
-    )
-  ) {
-    return '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
-  }
 
   try {
     const j = JSON.parse(text)
@@ -122,8 +58,16 @@ function parseApiError(raw, status) {
     /* ignore */
   }
 
+  if (
+    /Inactivity Timeout|timed?\s*out|deadline exceeded|execution timed out/i.test(
+      text,
+    )
+  ) {
+    return '분석 시간이 초과되었습니다.'
+  }
+
   if (status === 504 || status === 502 || status === 503) {
-    return 'AI 서버가 일시적으로 응답하지 않습니다. 잠시 후 다시 시도해 주세요.'
+    return 'AI 서버가 일시적으로 응답하지 않습니다.'
   }
 
   if (text.length > 280) {
@@ -132,26 +76,31 @@ function parseApiError(raw, status) {
   return text
 }
 
-/** @param {string} msg */
-function isRetryableErrorMessage(msg) {
-  return /일시적|502|503|504|과부하|빈 응답|답변을 만들지 못했습니다/i.test(msg)
-}
-
-function getChatClientTimeoutMs() {
-  const deploy =
-    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
-  return deploy ? 90_000 : 180_000
-}
-
-function getBackgroundPollDeadlineMs() {
-  return 180_000
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+async function triggerBackgroundWorker(jobId, requestBody) {
+  const urls = getBackgroundTriggerUrls()
+  if (!urls.length || !jobId) return false
+
+  const payload = JSON.stringify({ jobId, request: requestBody })
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: payload,
+      })
+      if (r.status === 202 || r.ok) return true
+    } catch {
+      /* 다음 URL 시도 */
+    }
+  }
+  return false
+}
 
 /**
  * @param {ReadableStream<Uint8Array>} body
- * @param {(ev: { event: string, text?: string, message?: string, model?: string }) => void} onEvent
+ * @param {(ev: object) => void} onEvent
  */
 async function consumeNdjsonStream(body, onEvent) {
   const reader = body.getReader()
@@ -169,7 +118,7 @@ async function consumeNdjsonStream(body, onEvent) {
       try {
         onEvent(JSON.parse(t))
       } catch {
-        /* ignore partial */
+        /* ignore */
       }
     }
   }
@@ -184,14 +133,14 @@ async function consumeNdjsonStream(body, onEvent) {
 }
 
 /**
- * @param {object} body
+ * @param {object} apiBody
  * @param {{ onStatus?: (msg: string) => void }=} options
  */
-async function sendOpenAiChatViaBackgroundJob(body, options) {
-  const bodyJson = JSON.stringify(body)
+async function sendOpenAiChatViaBackgroundJob(apiBody, options) {
+  const bodyJson = JSON.stringify(apiBody)
   if (bodyJson.length > 5_200_000) {
     throw new Error(
-      '이미지·대화 내용이 서버 한도를 넘었습니다. 사진 수를 줄여 다시 질문해 주세요.',
+      '이미지·대화 내용이 너무 큽니다. 회로도 1장과 질문만 짧게 보내 주세요.',
     )
   }
 
@@ -208,51 +157,39 @@ async function sendOpenAiChatViaBackgroundJob(body, options) {
 
   let jobId = ''
   try {
-    const j = JSON.parse(startRaw)
-    jobId = String(j.jobId || '').trim()
+    jobId = String(JSON.parse(startRaw).jobId || '').trim()
   } catch {
-    throw new Error('작업을 시작하지 못했습니다.')
+    throw new Error('분석 작업을 시작하지 못했습니다.')
   }
   if (!jobId) throw new Error('작업 ID를 받지 못했습니다.')
 
-  await triggerBackgroundWorker(jobId, body)
+  void triggerBackgroundWorker(jobId, apiBody)
 
-  options?.onStatus?.('Pro 모델로 분석 중입니다. 30초~2분 걸릴 수 있습니다…')
+  options?.onStatus?.('Pro 분석 중… 완료까지 최대 2분 걸릴 수 있습니다.')
 
-  const deadline = Date.now() + getBackgroundPollDeadlineMs()
+  const deadline = Date.now() + 180_000
   let polls = 0
-  let pollErrors = 0
-  let lastPendingAt = Date.now()
+  let stuckPending = Date.now()
+
   while (Date.now() < deadline) {
-    await sleep(polls < 3 ? 1500 : 2500)
+    await sleep(polls < 2 ? 2000 : 2500)
     polls += 1
 
     let stRes
-    let stRaw = ''
     try {
       stRes = await fetch(
         `${getChatJobApiUrl()}?jobId=${encodeURIComponent(jobId)}`,
-        { headers: { Accept: 'application/json' } },
       )
-      stRaw = await stRes.text()
     } catch {
-      pollErrors += 1
-      if (pollErrors < 10) continue
-      throw new Error('분석 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.')
+      continue
     }
 
+    const stRaw = await stRes.text()
     if (!stRes.ok) {
-      if (
-        (stRes.status === 502 || stRes.status === 503 || stRes.status === 504) &&
-        pollErrors < 12
-      ) {
-        pollErrors += 1
-        continue
-      }
-      if (stRes.status === 404) throw new Error('분석 작업을 찾을 수 없습니다.')
+      if (stRes.status === 404 && polls < 5) continue
+      if ((stRes.status === 502 || stRes.status === 503) && polls < 20) continue
       throw new Error(parseApiError(stRaw, stRes.status))
     }
-    pollErrors = 0
 
     let job
     try {
@@ -262,49 +199,50 @@ async function sendOpenAiChatViaBackgroundJob(body, options) {
     }
 
     const status = String(job.status || '')
-    const msg = String(job.message || '')
 
-    if (status === 'pending' || status === 'running') {
-      if (status === 'pending' && Date.now() - lastPendingAt > 12_000) {
-        lastPendingAt = Date.now()
-        await triggerBackgroundWorker(jobId, body)
+    if (status === 'pending') {
+      if (Date.now() - stuckPending > 8_000) {
+        stuckPending = Date.now()
+        void triggerBackgroundWorker(jobId, apiBody)
+      }
+      options?.onStatus?.('Pro 분석 준비 중…')
+      continue
+    }
+
+    if (status === 'running') {
+      if (Date.now() - stuckPending > 45_000) {
+        stuckPending = Date.now()
+        void triggerBackgroundWorker(jobId, apiBody)
       }
       options?.onStatus?.(
-        msg || 'Pro 모델로 분석 중입니다. 잠시만 기다려 주세요…',
+        String(job.message || '') || 'Pro 모델로 분석하는 중입니다…',
       )
       continue
     }
 
     if (status === 'done') {
       const text = String(job.text || '').trim()
-      if (!text) {
-        throw new Error('AI가 답변을 만들지 못했습니다.')
-      }
-      if (job.model && options?.onStatus) {
-        options.onStatus(
-          /pro/i.test(String(job.model))
-            ? 'Pro 분석 완료'
-            : '답변 완료',
-        )
-      }
+      if (!text) throw new Error('AI가 빈 답변을 반환했습니다.')
+      options?.onStatus?.(
+        job.model && /pro/i.test(String(job.model))
+          ? 'Pro 분석 완료'
+          : '분석 완료',
+      )
       return text
     }
 
     if (status === 'error') {
-      throw new Error(msg || 'AI 분석에 실패했습니다.')
+      throw new Error(String(job.message || 'AI 분석에 실패했습니다.'))
     }
   }
 
   throw new Error(
-    'Pro 분석 시간이 초과되었습니다. 사진을 줄이고 같은 질문을 다시 보내 주세요.',
+    'Pro 분석이 시간 초과되었습니다. 회로도 1장만 올리고 같은 질문을 다시 보내 주세요.',
   )
 }
 
 /**
- * @param {{ role: string, content: string }[]} messages
- * @param {string} contextDescription
- * @param {{ dataUrl: string, label?: string }[]=} images
- * @param {{ skipRefine?: boolean, onStatus?: (msg: string) => void, practiceContext?: string, chatGuidance?: string, hasImages?: boolean }=} options
+ * 로컬·배포 공통 스트리밍 (로컬 Pro / 배포 Flash 폴백)
  */
 async function sendOpenAiChatStreaming(
   messages,
@@ -321,14 +259,15 @@ async function sendOpenAiChatStreaming(
     practiceContext: options?.practiceContext,
     chatGuidance: options?.chatGuidance,
     hasImages: options?.hasImages,
+    preferFlash: options?.preferFlash === true,
   }
 
   const bodyJson = JSON.stringify(body)
   if (bodyJson.length > 5_200_000) {
-    throw new Error(
-      '이미지·대화 내용이 서버 한도를 넘었습니다. 사진 수를 줄여 다시 질문해 주세요.',
-    )
+    throw new Error('이미지·대화가 너무 큽니다. 사진 수를 줄여 주세요.')
   }
+
+  const timeoutMs = isNetlifyProduction() ? 85_000 : 180_000
 
   const res = await fetch(getChatApiUrl(), {
     method: 'POST',
@@ -337,25 +276,18 @@ async function sendOpenAiChatStreaming(
       Accept: 'application/x-ndjson',
     },
     body: bodyJson,
-    signal: AbortSignal.timeout(getChatClientTimeoutMs()),
+    signal: AbortSignal.timeout(timeoutMs),
   })
 
   if (!res.ok) {
-    const raw = await res.text()
-    throw new Error(parseApiError(raw, res.status))
+    throw new Error(parseApiError(await res.text(), res.status))
   }
 
   const ctype = res.headers.get('content-type') || ''
   if (!ctype.includes('ndjson') || !res.body) {
-    const raw = await res.text()
-    let data
-    try {
-      data = JSON.parse(raw)
-    } catch {
-      throw new Error(parseApiError(raw, res.status))
-    }
+    const data = JSON.parse(await res.text())
     const text = data.choices?.[0]?.message?.content?.trim()
-    if (!text) throw new Error('모델 응답이 비어 있습니다.')
+    if (!text) throw new Error('AI가 빈 답변을 반환했습니다.')
     return text
   }
 
@@ -369,20 +301,11 @@ async function sendOpenAiChatStreaming(
     }
     if (ev.event === 'done' && ev.text) {
       resultText = String(ev.text)
-      if (ev.model && options?.onStatus) {
-        options.onStatus(
-          /pro/i.test(String(ev.model))
-            ? 'Pro 분석 완료'
-            : '답변 완료 (안정 모드)',
-        )
-      }
     }
   })
 
   if (!resultText.trim()) {
-    throw new Error(
-      'AI가 답변을 만들지 못했습니다. 잠시 후 같은 질문을 다시 보내 주세요.',
-    )
+    throw new Error('AI가 빈 답변을 반환했습니다.')
   }
   return resultText.trim()
 }
@@ -391,79 +314,45 @@ async function sendOpenAiChatStreaming(
  * @param {{ role: string, content: string }[]} messages
  * @param {string} contextDescription
  * @param {{ dataUrl: string, label?: string }[]=} images
- * @param {{ skipRefine?: boolean, maxAttempts?: number, onStatus?: (msg: string) => void, practiceContext?: string, chatGuidance?: string, hasImages?: boolean }=} options
+ * @param {object=} options
  */
-export async function sendOpenAiChat(messages, contextDescription, images, options) {
-  const deploy =
-    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
-  const useBackground = useAiChatBackground()
-  const maxAttempts = Math.max(
-    1,
-    Math.min(deploy ? 2 : 3, options?.maxAttempts ?? (deploy ? 2 : 2)),
-  )
-
+export async function sendOpenAiChat(
+  messages,
+  contextDescription,
+  images,
+  options = {},
+) {
   const apiBody = {
     messages,
     contextDescription,
     images,
     skipRefine: true,
-    practiceContext: options?.practiceContext,
-    chatGuidance: options?.chatGuidance,
-    hasImages: options?.hasImages,
+    practiceContext: options.practiceContext,
+    chatGuidance: options.chatGuidance,
+    hasImages: options.hasImages,
   }
 
-  let lastError = new Error('요청에 실패했습니다.')
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  if (useAiChatBackground()) {
     try {
-      if (useBackground) {
-        try {
-          return await sendOpenAiChatViaBackgroundJob(apiBody, options)
-        } catch (bgErr) {
-          if (!shouldFallbackFromBackground(bgErr)) throw bgErr
-          options?.onStatus?.(
-            'Pro 백그라운드 연결에 문제가 있어 빠른 모드로 다시 시도합니다…',
-          )
-          return await sendOpenAiChatStreaming(
-            messages,
-            contextDescription,
-            images,
-            options,
-          )
-        }
-      }
-
-      if (options?.stream !== false) {
-        return await sendOpenAiChatStreaming(
-          messages,
-          contextDescription,
-          images,
-          options,
-        )
-      }
-
-      const res = await fetch(getChatApiUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...apiBody, stream: false }),
-        signal: AbortSignal.timeout(getChatClientTimeoutMs()),
-      })
-      const raw = await res.text()
-      if (!res.ok) throw new Error(parseApiError(raw, res.status))
-      const data = JSON.parse(raw)
-      const text = data.choices?.[0]?.message?.content?.trim()
-      if (!text) throw new Error('모델 응답이 비어 있습니다.')
-      return text
-    } catch (e) {
-      const normalized = normalizeChatFetchError(e)
-      lastError = new Error(normalized)
-      const msg = lastError.message
-      if (attempt >= maxAttempts - 1 || !isRetryableErrorMessage(msg)) {
-        throw lastError
-      }
-      await sleep(deploy ? 2500 : 2000)
+      return await sendOpenAiChatViaBackgroundJob(apiBody, options)
+    } catch (bgErr) {
+      const msg = bgErr instanceof Error ? bgErr.message : String(bgErr)
+      options.onStatus?.(
+        'Pro 백그라운드가 불가해 Flash로 빠르게 답변합니다…',
+      )
+      return await sendOpenAiChatStreaming(
+        messages,
+        contextDescription,
+        images,
+        { ...options, preferFlash: true },
+      )
     }
   }
 
-  throw lastError
+  return await sendOpenAiChatStreaming(
+    messages,
+    contextDescription,
+    images,
+    options,
+  )
 }

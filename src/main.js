@@ -1,5 +1,9 @@
 import './style.css'
-import { isOpenAiProxyAvailable, sendOpenAiChat } from './openai.js'
+import {
+  isOpenAiProxyAvailable,
+  normalizeChatFetchError,
+  sendOpenAiChat,
+} from './openai.js'
 import {
   formatPracticeDateKorean,
 } from './journal-hwpx.js'
@@ -1426,30 +1430,17 @@ async function sendChatMessage(
     })
     state.messages.push({ role: 'assistant', content: reply })
   } catch (e) {
-    const msg =
-      e instanceof Error ? e.message : '요청에 실패했습니다.'
+    const msg = normalizeChatFetchError(e)
     const isQuotaError =
       /exceeded your current quota/i.test(msg) ||
       /insufficient[_\s-]?quota/i.test(msg) ||
       /billing/i.test(msg)
-    const isTimeoutError =
-      /Inactivity Timeout|응답 시간이 초과|일시적으로 응답하지 않|서버 한도|빈 응답/i.test(
-        msg,
-      )
     state.messages.push({
       role: 'assistant',
       content: isQuotaError
-        ? `현재 OpenAI API 쿼터(크레딧)가 부족해 실시간 응답을 받을 수 없습니다.\n\n대신 모의 응답으로 계속 진행합니다.\n\n(해결: OpenAI 콘솔에서 결제/크레딧을 확인하고 .env의 OPENAI_API_KEY 설정 후 dev 서버를 재시작하세요.)`
-        : isTimeoutError
-          ? `${msg}\n\n(Pro 분석은 최대 2분 걸릴 수 있습니다. 화면에 「Pro 분석 중」이 보이면 기다려 주세요. 바로 끊기면 같은 질문을 한 번 더 보내 주세요.)`
-          : `오류: ${msg}`,
+        ? `현재 API 쿼터가 부족합니다. OpenAI/Gemini 결제·크레딧을 확인해 주세요.\n\n${mockAiReply(contextDescription)}`
+        : `오류: ${msg}\n\n같은 질문을 한 번 더 보내 보세요. 회로도 1장만 올리면 더 안정적입니다.`,
     })
-    if (isQuotaError) {
-      state.messages.push({
-        role: 'assistant',
-        content: mockAiReply(contextDescription),
-      })
-    }
   } finally {
     sendBtn.disabled = false
     inputEl.disabled = false

@@ -13,6 +13,7 @@ export async function runGeminiChatProxy(body, env) {
     practiceContext,
     chatGuidance,
     hasImages: hasImagesBody,
+    preferFlash: preferFlashBody,
   } = body || {}
 
   const key = (
@@ -77,8 +78,11 @@ export async function runGeminiChatProxy(body, env) {
   const chatModelEnv = normalizeModel(env.GEMINI_CHAT_MODEL || '')
 
   const defaultModel = 'gemini-2.5-flash'
+  const flashPrimary = 'gemini-2.5-flash'
   let primaryModel
-  if (isChatJob) {
+  if (preferFlashBody === true) {
+    primaryModel = flashPrimary
+  } else if (isChatJob) {
     primaryModel = chatModelEnv || explicitModel || defaultModel
   } else if (isReportJob) {
     primaryModel = explicitModel || chatModelEnv || defaultModel
@@ -108,8 +112,10 @@ export async function runGeminiChatProxy(body, env) {
     modelCandidates = [...flashFirst, ...rest]
   }
 
-  /** Netlify + Pro: 26초 Function 한도 안에서 끝내기 위한 안전 모드 */
-  const netlifyProSafe = isNetlify && useProPrimary
+  /** Netlify 동기(26초) Pro만 축소. Background 작업(GEMINI_BG_JOB)은 제한 없음 */
+  const isBgJob = String(env.GEMINI_BG_JOB || '').trim() === '1'
+  const netlifyProSafe =
+    isNetlify && useProPrimary && !isBgJob && preferFlashBody !== true
 
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
   const defaultMaxTokens = useProPrimary

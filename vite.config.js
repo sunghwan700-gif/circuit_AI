@@ -6,11 +6,8 @@ import {
   runGeminiChatProxy,
   runGeminiChatWithHeartbeat,
 } from './server/gemini-chat-core.mjs'
-import {
-  createPendingAiChatJob,
-  readAiChatJob,
-  writeAiChatJob,
-} from './server/ai-chat-jobs.mjs'
+import { createPendingAiChatJob, readAiChatJob } from './server/ai-chat-jobs.mjs'
+import { processAiChatJob } from './server/process-ai-chat-job.mjs'
 import {
   applySubmissionEnvDefaults,
   loadEnvForMode,
@@ -98,60 +95,6 @@ export default defineConfig(({ mode }) => {
             server.httpServer.headersTimeout = 0
           })
 
-          const runLocalAiJob = async (jobId, body) => {
-            const jobEnv = {
-              ...env,
-              GEMINI_NETLIFY_FAST: '0',
-              GEMINI_FETCH_TIMEOUT_MS: env.GEMINI_FETCH_TIMEOUT_MS || '120000',
-            }
-            try {
-              await writeAiChatJob(jobId, {
-                status: 'running',
-                message: 'Pro 모델로 분석하는 중입니다…',
-              })
-              const result = await runGeminiChatProxy(
-                { ...body, stream: false, skipRefine: true },
-                jobEnv,
-              )
-              if (!result.ok) {
-                let msg = '요청에 실패했습니다.'
-                try {
-                  msg = JSON.parse(result.body).error?.message || msg
-                } catch {
-                  /* ignore */
-                }
-                await writeAiChatJob(jobId, { status: 'error', message: msg })
-                return
-              }
-              let text = ''
-              let model = ''
-              try {
-                const j = JSON.parse(result.body)
-                text = j.choices?.[0]?.message?.content || ''
-                model = j.meta?.model || ''
-              } catch {
-                /* ignore */
-              }
-              if (!String(text).trim()) {
-                await writeAiChatJob(jobId, {
-                  status: 'error',
-                  message: 'AI가 답변을 만들지 못했습니다.',
-                })
-                return
-              }
-              await writeAiChatJob(jobId, {
-                status: 'done',
-                text: String(text).trim(),
-                model,
-              })
-            } catch (e) {
-              await writeAiChatJob(jobId, {
-                status: 'error',
-                message: e instanceof Error ? e.message : String(e),
-              })
-            }
-          }
-
           server.middlewares.use(async (req, res, next) => {
             const url = req.url || ''
             const pathname = url.split('?')[0] || ''
@@ -182,7 +125,7 @@ export default defineConfig(({ mode }) => {
                   return
                 }
                 const jobId = await createPendingAiChatJob(body)
-                void runLocalAiJob(jobId, body)
+                void processAiChatJob(jobId, body, env)
                 res.statusCode = 202
                 res.setHeader('Content-Type', 'application/json; charset=utf-8')
                 res.end(JSON.stringify({ jobId, status: 'pending' }))

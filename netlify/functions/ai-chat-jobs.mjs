@@ -1,5 +1,5 @@
 /**
- * AI 채팅 작업 시작(202) + 상태 조회(GET) — Blobs
+ * AI 채팅 작업 시작(202) + 상태 조회(GET)
  */
 import { createPendingAiChatJob, readAiChatJob } from '../../server/ai-chat-jobs.mjs'
 
@@ -49,6 +49,8 @@ export default async (request) => {
     }
 
     const id = await createPendingAiChatJob(body)
+    // Pro 분석은 openai-chat-background(최대 ~15분)에서만 실행.
+    // waitUntil은 ai-chat-jobs 10초 한도에 걸려 작업이 끊깁니다.
 
     return new Response(JSON.stringify({ jobId: id, status: 'pending' }), {
       status: 202,

@@ -1277,10 +1277,12 @@ function aiInstructionForPage(contextDescription, hasImages = true) {
 `
     : ''
 
-  return `다음은 전기 실습 이미지 정밀 분석 요청입니다.
-정확성이 최우선입니다. 이미지·대화에 없는 사실은 쓰지 마세요. 확인한 내용만 쓰고, 각 주장에 (근거: ○○)를 붙이세요.
-회로도와 실습 사진이 모두 있으면 도면과 실물을 반드시 대조하세요.
-학습자는 전기 지식이 부족할 수 있습니다. 어려운 말은 쉽게 풀어서, 할 일 순서대로 안내하세요. 분량은 각 항목 2~4문장으로 짧게, 1)~5)는 모두 완결하세요.
+  return `실습 채팅 조교 지침입니다.
+- 반드시 대화 맨 마지막 학생 질문에만 답하세요. 이전 답변을 그대로 반복하지 마세요.
+- 질문이 짧거나 한 가지 주제(예: 오결선, 안전, 용어 설명)면 그 주제만 3~10문장으로 답하세요. 매번 전체 회로를 처음부터 설명하지 마세요.
+- 「종합 분석」「전체 점검」「처음부터」를 요청할 때만 1)~5) 형식을 씁니다.
+- 이미지·대화에 없는 단자번호·배선·측정값을 추측하지 마세요. 확인한 것만 (근거: …)와 함께 씁니다.
+- 회로도와 실습 사진이 모두 있으면 질문과 관련된 부분만 도면·실물을 대조하세요.
 ${sparseBlock}
 맥락:
 - 단계: ${stage}
@@ -1418,14 +1420,13 @@ async function sendChatMessage(
   try {
     const images = await buildAiImagesForChat()
     const hasImages = images.length > 0
-    const instruction = `${aiInstructionForPage(contextDescription, hasImages)}\n${buildPracticeContextForAi()}`
-    const messagesForAi = [
-      { role: 'user', content: instruction },
-      ...trimMessagesForApi(state.messages, 12),
-    ]
+    const messagesForAi = trimMessagesForApi(state.messages, 12)
     let statusEl = messagesEl.querySelector('.chat-pending-text')
     const reply = await sendOpenAiChat(messagesForAi, contextDescription, images, {
       skipRefine: true,
+      practiceContext: buildPracticeContextForAi(),
+      chatGuidance: aiInstructionForPage(contextDescription, hasImages),
+      hasImages,
       onStatus: (msg) => {
         if (!statusEl) {
           statusEl = messagesEl.querySelector('.chat-pending-text')

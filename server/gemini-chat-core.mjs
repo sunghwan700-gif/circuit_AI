@@ -5,8 +5,15 @@
  * @returns {Promise<{ ok: true, body: string } | { ok: false, statusCode: number, body: string }>}
  */
 export async function runGeminiChatProxy(body, env) {
-  const { messages, contextDescription, images, skipRefine: skipRefineBody } =
-    body || {}
+  const {
+    messages,
+    contextDescription,
+    images,
+    skipRefine: skipRefineBody,
+    practiceContext,
+    chatGuidance,
+    hasImages: hasImagesBody,
+  } = body || {}
 
   const key = (
     env.GEMINI_API_KEY ||
@@ -126,7 +133,19 @@ export async function runGeminiChatProxy(body, env) {
         : 120_000
 
   const imageList = Array.isArray(images) ? images : []
-  const hasImages = imageList.length > 0
+  const hasImages =
+    imageList.length > 0 || hasImagesBody === true || hasImagesBody === 'true'
+
+  const getLastUserQuestion = (list) => {
+    const arr = Array.isArray(list) ? list : []
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i]?.role === 'user') {
+        const t = String(arr[i].content || '').trim()
+        if (t && !/^다음은 전기 실습/.test(t)) return t
+      }
+    }
+    return ''
+  }
 
   if (netlifyFast && imageList.length > 4) {
     return {
@@ -159,41 +178,53 @@ export async function runGeminiChatProxy(body, env) {
       }),
     }
   }
+  const chatExtra = isChatJob
+    ? String(chatGuidance || '').trim()
+    : ''
+  const practiceExtra = String(practiceContext || '').trim()
+
   const systemContent = `당신은 전기 실습(회로·승강기·철도전기신호 등) 실습일지를 돕는 조교입니다. 항상 한국어로 답합니다.
 
 목표: 학습자가 실습 중 질문하고, 회로도·실습 사진을 근거로 정확한 피드백을 받도록 돕습니다.
 
+${
+    isChatJob
+      ? `채팅 답변 규칙(필수):
+- 대화에서 가장 마지막 학생(user) 메시지가 이번에 답할 질문입니다. 그 질문의 핵심만 다루세요.
+- 이전 assistant 답변을 복사·요약 반복하지 마세요. 질문이 바뀌면 답도 달라져야 합니다.
+- 짧은 질문·단일 주제 → 3~10문장 또는 짧은 목록. 「종합」「전체 점검」「처음부터」 요청일 때만 1)~5) 형식.
+- 이미지는 질문과 관련된 부분만 근거로 사용하세요. 질문과 무관한 회로 설명은 하지 마세요.`
+      : ''
+  }
+
 정확성(최우선 — 환각·오답 방지):
-- 이미지·대화에서 직접 확인한 사실만 '확인됨'으로 씁니다. 읽기 어렵거나 안 보이면 "판독 불가" 또는 "확인 필요"라고만 씁니다.
-- 단자 번호·배선 색·부품 모델·측정값·동작 상태를 추측으로 채우지 마세요. 근거 없는 문장은 쓰지 마세요.
-- 각 항목에서 핵심 주장 뒤에 (근거: ○○ 이미지/표기에서 확인) 형태로 출처를 짧게 붙이세요.
-- 회로도와 실습 사진이 함께 있으면 반드시 대조합니다. 불일치는 "도면 대비 ○○"처럼 구체적으로 적습니다.
-- 확실하지 않으면 결론을 단정하지 말고 확인 질문 1~3개를 제시합니다.
+- 이미지·대화에서 직접 확인한 사실만 씁니다. 읽기 어렵거나 안 보이면 "판독 불가" 또는 "확인 필요"만 씁니다.
+- 단자 번호·배선 색·부품 모델·측정값·동작 상태를 추측으로 채우지 마세요.
+- 핵심 주장 뒤에 (근거: ○○) 형태로 출처를 짧게 붙이세요.
+- 회로도와 실습 사진이 함께 있으면 질문과 관련된 범위에서만 도면·실물을 대조합니다.
+- 확실하지 않으면 단정하지 말고 확인 질문 1~3개만 제시합니다.
 
-학습자 수준:
-- 전기 초보자도 이해할 수 있게, 전문 용어는 처음에 괄호로 쉬운 뜻을 붙입니다.
-- 비난하지 않고, 실습에서 바로 할 수 있는 순서로 안내합니다.
-
-분량:
-- 불필요하게 길게 쓰지 않습니다. 각 번호 항목은 2~4문장(또는 짧은 목록)으로 씁니다.
-- 다만 1)~5) 형식은 빠짐없이 끝까지 완결합니다. 중간에 문장을 끊지 마세요.
-
+학습자 수준: 전기 초보자도 이해할 수 있게, 전문 용어는 괄호로 쉬운 뜻을 붙입니다.
 안전: 감전·단락·과열 가능성이 있으면 맨 앞에 전원 차단·LOCKOUT을 안내합니다.
 
 ${
-    hasImages
-      ? `이번 요청에 회로도·실습 사진이 포함될 수 있습니다. 라벨·단자·기호·배선을 읽어 정밀히 분석하세요.
+    hasImages && !isChatJob
+      ? `이번 요청에 회로도·실습 사진이 포함될 수 있습니다.
 
-답변 형식(반드시 1~5 모두 작성):
-1) 결론 요약 — 무엇을 하는 회로/실습인지, 지금 상태 한줄 평가
-2) 관찰/근거 — 이미지에서 확인한 표기·배선·부품만 (도면 vs 실물 대조 포함)
-3) 분석 — 원인·불일치 후보는 근거가 있을 때만, 우선순위
-4) 점검/조치 — 번호 목록(안전 순서), 학생이 지금 할 일
-5) 추가 확인 — 부족한 정보·추가 촬영이 필요하면 1~3개만`
-      : `분석용 이미지가 없습니다. 일반 안전·실습 원칙과, 구체 피드백을 위해 필요한 회로도/사진(촬영 방법 1문장씩)만 2~6문장으로 안내하세요. 가상의 회로 진단을 쓰지 마세요.`
+답변 형식(종합 분석 시 1~5 모두 작성):
+1) 결론 요약
+2) 관찰/근거 (도면 vs 실물 대조)
+3) 분석
+4) 점검/조치
+5) 추가 확인`
+      : hasImages && isChatJob
+        ? `첨부 이미지(회로도·실습 사진)는 마지막 학생 질문에 답할 때만 참고하세요.`
+        : `분석용 이미지가 없습니다. 가상의 회로 진단·단자 번호 추측을 쓰지 마세요. 일반 안전·필요한 사진 안내만 2~6문장으로 답하세요.`
   }
 
-현재 실습 단계 맥락: ${contextDescription || ''}`
+현재 실습 단계: ${contextDescription || ''}
+${chatExtra ? `\n${chatExtra}` : ''}
+${practiceExtra ? `\n${practiceExtra}` : ''}`
 
   try {
     const trimText = (s, max = 2400) => {
@@ -202,9 +233,16 @@ ${
     }
 
     let msgList = Array.isArray(messages) ? messages : []
+    msgList = msgList.filter((m) => {
+      const t = String(m?.content || '').trim()
+      if (m?.role === 'user' && /^다음은 전기 실습/.test(t)) return false
+      return true
+    })
     if (netlifyFast && msgList.length > 12) {
       msgList = msgList.slice(-12)
     }
+
+    const lastUserQuestion = getLastUserQuestion(msgList)
 
     const contents = msgList.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
@@ -238,13 +276,14 @@ ${
       }
 
       const attachNote = imageList
-        .map((img, i) => String(img?.label || `이미지 ${i + 1}`))
+        .map((img) => String(img?.label || ''))
         .filter(Boolean)
         .join(', ')
+      const qBlock = lastUserQuestion
+        ? `【이번 학생 질문 — 이것에만 답할 것】\n${lastUserQuestion}`
+        : '【이번 학생 질문】 (텍스트 없음 — 이미지 기준으로 짧게 안내)'
       contents[lastUserIdx].parts.unshift({
-        text: attachNote
-          ? `첨부 이미지(${attachNote})를 함께 분석해 답변해줘.`
-          : '첨부 이미지를 함께 분석해 답변해줘.',
+        text: `${qBlock}\n\n【참고 이미지】${attachNote || '첨부됨'}\n위 질문과 직접 관련된 내용만 이미지에서 확인해 답하세요. 질문과 무관한 전체 회로 해설은 하지 마세요.`,
       })
 
       for (const img of imageList) {
@@ -316,11 +355,11 @@ ${
             parts: [{ text: systemContent }],
           },
           contents: contentsToSend,
-          generationConfig: {
-            temperature: 0.12,
-            topP: 0.88,
-            maxOutputTokens,
-          },
+            generationConfig: {
+              temperature: isChatJob ? 0.28 : 0.12,
+              topP: 0.9,
+              maxOutputTokens,
+            },
         }),
         signal: AbortSignal.timeout(geminiFetchTimeoutMs),
       }
@@ -507,6 +546,7 @@ ${
       out &&
       out.trim() &&
       !isReportJsonJob &&
+      !isChatJob &&
       skipRefineBody !== true &&
       hasImages
     if (refineShouldRun) {

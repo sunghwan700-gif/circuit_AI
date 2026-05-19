@@ -8,9 +8,7 @@ export function isOpenAiProxyAvailable() {
 }
 
 function getChatApiUrl() {
-  const deploy =
-    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
-  return deploy ? '/.netlify/functions/openai-chat' : '/api/openai/chat'
+  return '/api/openai/chat'
 }
 
 /**
@@ -137,6 +135,9 @@ async function sendOpenAiChatStreaming(
     images,
     skipRefine: true,
     stream: true,
+    practiceContext: options?.practiceContext,
+    chatGuidance: options?.chatGuidance,
+    hasImages: options?.hasImages,
   }
 
   const bodyJson = JSON.stringify(body)
@@ -220,7 +221,15 @@ export async function sendOpenAiChat(messages, contextDescription, images, optio
           options,
         )
       }
-      const body = { messages, contextDescription, images, stream: false }
+      const body = {
+        messages,
+        contextDescription,
+        images,
+        stream: false,
+        practiceContext: options?.practiceContext,
+        chatGuidance: options?.chatGuidance,
+        hasImages: options?.hasImages,
+      }
       if (options?.skipRefine) body.skipRefine = true
       const res = await fetch(getChatApiUrl(), {
         method: 'POST',

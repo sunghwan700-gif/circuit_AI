@@ -9,7 +9,7 @@
   VITE_NETLIFY_DEPLOY = "true"
   # Pro 채팅 시 클라이언트 이미지 압축 강화 (빌드에 포함)
   VITE_GEMINI_CHAT_MODEL = "gemini-2.5-pro"
-  # Pro 채팅: 26초 동기 한도 대신 Background Function + 폴링
+  # Pro 채팅: 백그라운드 분석(26초 동기 한도 회피) + Pro 유지(Flash 폴백 없음)
   VITE_AI_CHAT_BACKGROUND = "true"
 
 [functions]

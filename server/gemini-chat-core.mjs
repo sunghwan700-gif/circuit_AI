@@ -727,7 +727,7 @@ export async function runGeminiChatWithHeartbeat(body, env, push) {
   push({
     event: 'status',
     message: proMode
-      ? 'Pro 모델로 분석 중입니다. 정밀 분석에 30~60초 걸릴 수 있습니다…'
+      ? 'Pro 모델로 분석 중…'
       : '회로·사진을 분석하는 중입니다…',
   })
   const pingMs = proMode ? 900 : 2500

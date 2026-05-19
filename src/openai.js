@@ -1,5 +1,7 @@
 /**
- * AI 채팅 — 로컬: Pro 스트리밍(긴 대기) / 배포: Background 작업 + 폴링
+ * AI 채팅
+ * - 로컬 npm run dev: Pro 스트리밍 (긴 대기)
+ * - Netlify 배포: Pro 백그라운드 + 폴링 (26초 동기 한도 회피, Flash 폴백 없음)
  */
 export function isOpenAiProxyAvailable() {
   return true
@@ -19,7 +21,7 @@ function isNetlifyProduction() {
   )
 }
 
-/** 배포(Pro)에서만 Background — 로컬 npm run dev 는 스트리밍 */
+/** 배포 + Pro: 백그라운드(타임아웃 방지). 로컬은 스트리밍 */
 export function useAiChatBackground() {
   if (!isNetlifyProduction()) return false
   if (import.meta.env.VITE_AI_CHAT_BACKGROUND === 'false') return false
@@ -43,6 +45,9 @@ export function normalizeChatFetchError(err) {
   if (/failed to fetch|networkerror|load failed|aborterror/i.test(msg)) {
     return '서버에 연결하지 못했습니다. 새로고침 후 다시 시도해 주세요.'
   }
+  if (/abort|timeout|timed out/i.test(msg)) {
+    return '연결이 끊겼습니다. 같은 질문을 한 번 더 보내 주세요.'
+  }
   return msg
 }
 
@@ -63,11 +68,11 @@ function parseApiError(raw, status) {
       text,
     )
   ) {
-    return '분석 시간이 초과되었습니다.'
+    return '분석이 아직 진행 중이거나 서버 한도에 걸렸습니다. 잠시 후 같은 질문을 다시 보내 주세요.'
   }
 
   if (status === 504 || status === 502 || status === 503) {
-    return 'AI 서버가 일시적으로 응답하지 않습니다.'
+    return 'AI 서버가 일시적으로 바쁩니다. 10~20초 뒤 같은 질문을 다시 보내 주세요.'
   }
 
   if (text.length > 280) {
@@ -92,16 +97,12 @@ async function triggerBackgroundWorker(jobId, requestBody) {
       })
       if (r.status === 202 || r.ok) return true
     } catch {
-      /* 다음 URL 시도 */
+      /* 다음 URL */
     }
   }
   return false
 }
 
-/**
- * @param {ReadableStream<Uint8Array>} body
- * @param {(ev: object) => void} onEvent
- */
 async function consumeNdjsonStream(body, onEvent) {
   const reader = body.getReader()
   const decoder = new TextDecoder()
@@ -132,10 +133,6 @@ async function consumeNdjsonStream(body, onEvent) {
   }
 }
 
-/**
- * @param {object} apiBody
- * @param {{ onStatus?: (msg: string) => void }=} options
- */
 async function sendOpenAiChatViaBackgroundJob(apiBody, options) {
   const bodyJson = JSON.stringify(apiBody)
   if (bodyJson.length > 5_200_000) {
@@ -165,14 +162,14 @@ async function sendOpenAiChatViaBackgroundJob(apiBody, options) {
 
   void triggerBackgroundWorker(jobId, apiBody)
 
-  options?.onStatus?.('Pro 분석 중… 완료까지 최대 2분 걸릴 수 있습니다.')
+  options?.onStatus?.('Pro 분석 중… 완료까지 1~3분 걸릴 수 있습니다.')
 
-  const deadline = Date.now() + 180_000
+  const deadline = Date.now() + 300_000
   let polls = 0
-  let stuckPending = Date.now()
+  let lastTrigger = Date.now()
 
   while (Date.now() < deadline) {
-    await sleep(polls < 2 ? 2000 : 2500)
+    await sleep(polls < 3 ? 1500 : 2000)
     polls += 1
 
     let stRes
@@ -186,8 +183,10 @@ async function sendOpenAiChatViaBackgroundJob(apiBody, options) {
 
     const stRaw = await stRes.text()
     if (!stRes.ok) {
-      if (stRes.status === 404 && polls < 5) continue
-      if ((stRes.status === 502 || stRes.status === 503) && polls < 20) continue
+      if (stRes.status === 404 && polls < 8) continue
+      if ((stRes.status === 502 || stRes.status === 503) && polls < 30) {
+        continue
+      }
       throw new Error(parseApiError(stRaw, stRes.status))
     }
 
@@ -200,22 +199,15 @@ async function sendOpenAiChatViaBackgroundJob(apiBody, options) {
 
     const status = String(job.status || '')
 
-    if (status === 'pending') {
-      if (Date.now() - stuckPending > 8_000) {
-        stuckPending = Date.now()
-        void triggerBackgroundWorker(jobId, apiBody)
-      }
-      options?.onStatus?.('Pro 분석 준비 중…')
-      continue
-    }
-
-    if (status === 'running') {
-      if (Date.now() - stuckPending > 45_000) {
-        stuckPending = Date.now()
+    if (status === 'pending' || status === 'running') {
+      if (Date.now() - lastTrigger > 12_000) {
+        lastTrigger = Date.now()
         void triggerBackgroundWorker(jobId, apiBody)
       }
       options?.onStatus?.(
-        String(job.message || '') || 'Pro 모델로 분석하는 중입니다…',
+        status === 'pending'
+          ? 'Pro 분석 준비 중…'
+          : String(job.message || '') || 'Pro 모델로 분석하는 중…',
       )
       continue
     }
@@ -223,11 +215,7 @@ async function sendOpenAiChatViaBackgroundJob(apiBody, options) {
     if (status === 'done') {
       const text = String(job.text || '').trim()
       if (!text) throw new Error('AI가 빈 답변을 반환했습니다.')
-      options?.onStatus?.(
-        job.model && /pro/i.test(String(job.model))
-          ? 'Pro 분석 완료'
-          : '분석 완료',
-      )
+      options?.onStatus?.('Pro 분석 완료')
       return text
     }
 
@@ -237,13 +225,10 @@ async function sendOpenAiChatViaBackgroundJob(apiBody, options) {
   }
 
   throw new Error(
-    'Pro 분석이 시간 초과되었습니다. 회로도 1장만 올리고 같은 질문을 다시 보내 주세요.',
+    'Pro 분석이 오래 걸리고 있습니다. 회로도 1장만 올리고 같은 질문을 다시 보내 주세요.',
   )
 }
 
-/**
- * 로컬·배포 공통 스트리밍 (로컬 Pro / 배포 Flash 폴백)
- */
 async function sendOpenAiChatStreaming(
   messages,
   contextDescription,
@@ -259,15 +244,12 @@ async function sendOpenAiChatStreaming(
     practiceContext: options?.practiceContext,
     chatGuidance: options?.chatGuidance,
     hasImages: options?.hasImages,
-    preferFlash: options?.preferFlash === true,
   }
 
   const bodyJson = JSON.stringify(body)
   if (bodyJson.length > 5_200_000) {
     throw new Error('이미지·대화가 너무 큽니다. 사진 수를 줄여 주세요.')
   }
-
-  const timeoutMs = isNetlifyProduction() ? 85_000 : 180_000
 
   const res = await fetch(getChatApiUrl(), {
     method: 'POST',
@@ -276,7 +258,7 @@ async function sendOpenAiChatStreaming(
       Accept: 'application/x-ndjson',
     },
     body: bodyJson,
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: AbortSignal.timeout(180_000),
   })
 
   if (!res.ok) {
@@ -310,12 +292,6 @@ async function sendOpenAiChatStreaming(
   return resultText.trim()
 }
 
-/**
- * @param {{ role: string, content: string }[]} messages
- * @param {string} contextDescription
- * @param {{ dataUrl: string, label?: string }[]=} images
- * @param {object=} options
- */
 export async function sendOpenAiChat(
   messages,
   contextDescription,
@@ -333,18 +309,7 @@ export async function sendOpenAiChat(
   }
 
   if (useAiChatBackground()) {
-    try {
-      return await sendOpenAiChatViaBackgroundJob(apiBody, options)
-    } catch (bgErr) {
-      const msg = bgErr instanceof Error ? bgErr.message : String(bgErr)
-      options.onStatus?.('정밀 분석이 지연되어 빠른 모드로 답변합니다…')
-      return await sendOpenAiChatStreaming(
-        messages,
-        contextDescription,
-        images,
-        { ...options, preferFlash: true },
-      )
-    }
+    return await sendOpenAiChatViaBackgroundJob(apiBody, options)
   }
 
   return await sendOpenAiChatStreaming(

@@ -15,7 +15,7 @@ function jobEnv(baseEnv = {}) {
     GEMINI_FETCH_TIMEOUT_MS: String(
       baseEnv.GEMINI_BG_FETCH_TIMEOUT_MS ||
         process.env.GEMINI_BG_FETCH_TIMEOUT_MS ||
-        120000,
+        180000,
     ),
   }
 }

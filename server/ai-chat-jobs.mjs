@@ -108,14 +108,24 @@ export function newJobId() {
 /** @param {string} baseUrl @param {string} jobId @param {object} requestBody */
 export async function triggerAiChatBackground(baseUrl, jobId, requestBody) {
   const root = String(baseUrl || '').replace(/\/$/, '')
-  const url = `${root}/.netlify/functions/openai-chat-background`
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify({ jobId, request: requestBody }),
-  })
-  if (!r.ok && r.status !== 202) {
-    const t = await r.text().catch(() => '')
-    throw new Error(t || `Background trigger failed (${r.status})`)
+  const payload = JSON.stringify({ jobId, request: requestBody })
+  const urls = [
+    `${root}/.netlify/functions/openai-chat-background`,
+    `${root}/api/openai/chat/background`,
+  ]
+  let lastErr = ''
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: payload,
+      })
+      if (r.ok || r.status === 202) return
+      lastErr = await r.text().catch(() => '')
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e)
+    }
   }
+  throw new Error(lastErr || 'Background trigger failed')
 }

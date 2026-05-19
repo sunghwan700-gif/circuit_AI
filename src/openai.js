@@ -337,9 +337,7 @@ export async function sendOpenAiChat(
       return await sendOpenAiChatViaBackgroundJob(apiBody, options)
     } catch (bgErr) {
       const msg = bgErr instanceof Error ? bgErr.message : String(bgErr)
-      options.onStatus?.(
-        'Pro 백그라운드가 불가해 Flash로 빠르게 답변합니다…',
-      )
+      options.onStatus?.('정밀 분석이 지연되어 빠른 모드로 답변합니다…')
       return await sendOpenAiChatStreaming(
         messages,
         contextDescription,

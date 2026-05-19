@@ -19,6 +19,9 @@
 [functions."openai-chat"]
   timeout = 26
 
+[functions."ai-chat-jobs"]
+  timeout = 10
+
 # 로컬에서 Netlify와 동일하게(Functions + 리다이렉트 + Blobs) 테스트: npm run dev:netlify
 # 브라우저는 보통 http://localhost:8888 — Vite(5173)로 프록시됩니다.
 [dev]
@@ -54,6 +57,12 @@
 [[redirects]]
   from = "/api/openai/chat/job"
   to = "/.netlify/functions/ai-chat-jobs"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/openai/chat/background"
+  to = "/.netlify/functions/openai-chat-background"
   status = 200
   force = true
 

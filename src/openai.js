@@ -15,6 +15,47 @@ function getChatJobApiUrl() {
   return '/api/openai/chat/job'
 }
 
+/** 로컬은 Vite가 POST 시 바로 처리. 배포만 Background Function 호출 */
+function getBackgroundTriggerUrl() {
+  if (import.meta.env.DEV && import.meta.env.VITE_NETLIFY_DEPLOY !== 'true') {
+    return ''
+  }
+  return '/api/openai/chat/background'
+}
+
+async function triggerBackgroundWorker(jobId, requestBody) {
+  const url = getBackgroundTriggerUrl()
+  if (!url) return
+
+  const payload = JSON.stringify({ jobId, request: requestBody })
+  const post = () =>
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: payload,
+    })
+
+  try {
+    const r = await post()
+    if (r.status === 202 || r.ok) return
+  } catch {
+    /* retry */
+  }
+  await sleep(600)
+  try {
+    await post()
+  } catch {
+    /* poll 단계에서 pending 지속 시 재시도 */
+  }
+}
+
+function shouldFallbackFromBackground(err) {
+  const msg = err instanceof Error ? err.message : String(err || '')
+  return /일시적으로 응답|502|503|504|작업을 시작|작업 ID|연결하지 못|Background trigger/i.test(
+    msg,
+  )
+}
+
 /** Pro 채팅: Netlify Background(배포) 또는 로컬 job API로 26초 한도 우회 */
 export function useAiChatBackground() {
   if (import.meta.env.VITE_AI_CHAT_BACKGROUND === 'false') return false
@@ -174,23 +215,44 @@ async function sendOpenAiChatViaBackgroundJob(body, options) {
   }
   if (!jobId) throw new Error('작업 ID를 받지 못했습니다.')
 
+  await triggerBackgroundWorker(jobId, body)
+
   options?.onStatus?.('Pro 모델로 분석 중입니다. 30초~2분 걸릴 수 있습니다…')
 
   const deadline = Date.now() + getBackgroundPollDeadlineMs()
   let polls = 0
+  let pollErrors = 0
+  let lastPendingAt = Date.now()
   while (Date.now() < deadline) {
     await sleep(polls < 3 ? 1500 : 2500)
     polls += 1
 
-    const stRes = await fetch(
-      `${getChatJobApiUrl()}?jobId=${encodeURIComponent(jobId)}`,
-      { headers: { Accept: 'application/json' } },
-    )
-    const stRaw = await stRes.text()
+    let stRes
+    let stRaw = ''
+    try {
+      stRes = await fetch(
+        `${getChatJobApiUrl()}?jobId=${encodeURIComponent(jobId)}`,
+        { headers: { Accept: 'application/json' } },
+      )
+      stRaw = await stRes.text()
+    } catch {
+      pollErrors += 1
+      if (pollErrors < 10) continue
+      throw new Error('분석 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.')
+    }
+
     if (!stRes.ok) {
+      if (
+        (stRes.status === 502 || stRes.status === 503 || stRes.status === 504) &&
+        pollErrors < 12
+      ) {
+        pollErrors += 1
+        continue
+      }
       if (stRes.status === 404) throw new Error('분석 작업을 찾을 수 없습니다.')
       throw new Error(parseApiError(stRaw, stRes.status))
     }
+    pollErrors = 0
 
     let job
     try {
@@ -203,6 +265,10 @@ async function sendOpenAiChatViaBackgroundJob(body, options) {
     const msg = String(job.message || '')
 
     if (status === 'pending' || status === 'running') {
+      if (status === 'pending' && Date.now() - lastPendingAt > 12_000) {
+        lastPendingAt = Date.now()
+        await triggerBackgroundWorker(jobId, body)
+      }
       options?.onStatus?.(
         msg || 'Pro 모델로 분석 중입니다. 잠시만 기다려 주세요…',
       )
@@ -351,7 +417,20 @@ export async function sendOpenAiChat(messages, contextDescription, images, optio
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       if (useBackground) {
-        return await sendOpenAiChatViaBackgroundJob(apiBody, options)
+        try {
+          return await sendOpenAiChatViaBackgroundJob(apiBody, options)
+        } catch (bgErr) {
+          if (!shouldFallbackFromBackground(bgErr)) throw bgErr
+          options?.onStatus?.(
+            'Pro 백그라운드 연결에 문제가 있어 빠른 모드로 다시 시도합니다…',
+          )
+          return await sendOpenAiChatStreaming(
+            messages,
+            contextDescription,
+            images,
+            options,
+          )
+        }
       }
 
       if (options?.stream !== false) {

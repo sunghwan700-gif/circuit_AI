@@ -1,11 +1,7 @@
 /**
  * AI 채팅 작업 시작(202) + 상태 조회(GET) — Blobs
  */
-import {
-  createPendingAiChatJob,
-  readAiChatJob,
-  triggerAiChatBackground,
-} from '../../server/ai-chat-jobs.mjs'
+import { createPendingAiChatJob, readAiChatJob } from '../../server/ai-chat-jobs.mjs'
 
 function cors() {
   return {
@@ -13,21 +9,6 @@ function cors() {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Content-Type': 'application/json; charset=utf-8',
-  }
-}
-
-function siteUrl(request) {
-  const u =
-    process.env.URL ||
-    process.env.DEPLOY_URL ||
-    process.env.DEPLOY_PRIME_URL ||
-    ''
-  if (u) return u.replace(/\/$/, '')
-  try {
-    const url = new URL(request.url)
-    return url.origin
-  } catch {
-    return 'http://localhost:8888'
   }
 }
 
@@ -68,15 +49,6 @@ export default async (request) => {
     }
 
     const id = await createPendingAiChatJob(body)
-    try {
-      await triggerAiChatBackground(siteUrl(request), id, body)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      return new Response(JSON.stringify({ error: { message: msg } }), {
-        status: 502,
-        headers: cors(),
-      })
-    }
 
     return new Response(JSON.stringify({ jobId: id, status: 'pending' }), {
       status: 202,

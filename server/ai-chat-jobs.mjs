@@ -34,7 +34,12 @@ export async function readAiChatJob(id) {
   const key = jobKey(id)
   if (!id) return null
 
-  if (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  const useBlobs =
+    process.env.NETLIFY === 'true' ||
+    Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
+    Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
+
+  if (useBlobs) {
     try {
       const store = await getBlobStore()
       const data = await store.get(key, { type: 'json' })
@@ -64,7 +69,12 @@ export async function writeAiChatJob(id, patch) {
     updatedAt: Date.now(),
   }
 
-  if (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  const useBlobs =
+    process.env.NETLIFY === 'true' ||
+    Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
+    Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
+
+  if (useBlobs) {
     const store = await getBlobStore()
     await store.setJSON(key, next)
     return next

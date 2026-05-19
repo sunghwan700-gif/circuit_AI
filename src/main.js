@@ -1441,7 +1441,7 @@ async function sendChatMessage(
       content: isQuotaError
         ? `현재 OpenAI API 쿼터(크레딧)가 부족해 실시간 응답을 받을 수 없습니다.\n\n대신 모의 응답으로 계속 진행합니다.\n\n(해결: OpenAI 콘솔에서 결제/크레딧을 확인하고 .env의 OPENAI_API_KEY 설정 후 dev 서버를 재시작하세요.)`
         : isTimeoutError
-          ? `${msg}\n\n(Pro 분석은 30~60초 걸릴 수 있습니다. 잠시 후 같은 질문을 다시 보내 주세요.)`
+          ? `${msg}\n\n(Pro 분석은 최대 2분 걸릴 수 있습니다. 화면에 「Pro 분석 중」이 보이면 기다려 주세요. 바로 끊기면 같은 질문을 한 번 더 보내 주세요.)`
           : `오류: ${msg}`,
     })
     if (isQuotaError) {

@@ -14,6 +14,7 @@ dist-ssr
 
 .env
 server/data/
+server/data/ai-chat-jobs/
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

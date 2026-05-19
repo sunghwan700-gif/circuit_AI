@@ -1,7 +1,7 @@
 /**
  * AI 프록시 사용 가능 여부.
  * - 로컬: Vite dev 서버가 /api/openai/chat 을 처리합니다.
- * - Netlify: Function (스트리밍·heartbeat)
+ * - Netlify: Function (스트리밍·heartbeat) 또는 Background + 폴링(Pro)
  */
 export function isOpenAiProxyAvailable() {
   return true
@@ -9,6 +9,27 @@ export function isOpenAiProxyAvailable() {
 
 function getChatApiUrl() {
   return '/api/openai/chat'
+}
+
+function getChatJobApiUrl() {
+  return '/api/openai/chat/job'
+}
+
+/** Pro 채팅: Netlify Background(배포) 또는 로컬 job API로 26초 한도 우회 */
+export function useAiChatBackground() {
+  if (import.meta.env.VITE_AI_CHAT_BACKGROUND === 'false') return false
+  const m = String(
+    import.meta.env.VITE_GEMINI_CHAT_MODEL ||
+      import.meta.env.VITE_GEMINI_MODEL ||
+      '',
+  ).toLowerCase()
+  const wantsPro = /pro/.test(m)
+  if (import.meta.env.VITE_AI_CHAT_BACKGROUND === 'true') {
+    return wantsPro || import.meta.env.PROD === true
+  }
+  const deploy =
+    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
+  return deploy && wantsPro
 }
 
 /**
@@ -81,11 +102,15 @@ function getChatClientTimeoutMs() {
   return deploy ? 90_000 : 180_000
 }
 
+function getBackgroundPollDeadlineMs() {
+  return 180_000
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
  * @param {ReadableStream<Uint8Array>} body
- * @param {(ev: { event: string, text?: string, message?: string }) => void} onEvent
+ * @param {(ev: { event: string, text?: string, message?: string, model?: string }) => void} onEvent
  */
 async function consumeNdjsonStream(body, onEvent) {
   const reader = body.getReader()
@@ -118,10 +143,102 @@ async function consumeNdjsonStream(body, onEvent) {
 }
 
 /**
+ * @param {object} body
+ * @param {{ onStatus?: (msg: string) => void }=} options
+ */
+async function sendOpenAiChatViaBackgroundJob(body, options) {
+  const bodyJson = JSON.stringify(body)
+  if (bodyJson.length > 5_200_000) {
+    throw new Error(
+      '이미지·대화 내용이 서버 한도를 넘었습니다. 사진 수를 줄여 다시 질문해 주세요.',
+    )
+  }
+
+  const startRes = await fetch(getChatJobApiUrl(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: bodyJson,
+  })
+
+  const startRaw = await startRes.text()
+  if (!startRes.ok && startRes.status !== 202) {
+    throw new Error(parseApiError(startRaw, startRes.status))
+  }
+
+  let jobId = ''
+  try {
+    const j = JSON.parse(startRaw)
+    jobId = String(j.jobId || '').trim()
+  } catch {
+    throw new Error('작업을 시작하지 못했습니다.')
+  }
+  if (!jobId) throw new Error('작업 ID를 받지 못했습니다.')
+
+  options?.onStatus?.('Pro 모델로 분석 중입니다. 30초~2분 걸릴 수 있습니다…')
+
+  const deadline = Date.now() + getBackgroundPollDeadlineMs()
+  let polls = 0
+  while (Date.now() < deadline) {
+    await sleep(polls < 3 ? 1500 : 2500)
+    polls += 1
+
+    const stRes = await fetch(
+      `${getChatJobApiUrl()}?jobId=${encodeURIComponent(jobId)}`,
+      { headers: { Accept: 'application/json' } },
+    )
+    const stRaw = await stRes.text()
+    if (!stRes.ok) {
+      if (stRes.status === 404) throw new Error('분석 작업을 찾을 수 없습니다.')
+      throw new Error(parseApiError(stRaw, stRes.status))
+    }
+
+    let job
+    try {
+      job = JSON.parse(stRaw)
+    } catch {
+      continue
+    }
+
+    const status = String(job.status || '')
+    const msg = String(job.message || '')
+
+    if (status === 'pending' || status === 'running') {
+      options?.onStatus?.(
+        msg || 'Pro 모델로 분석 중입니다. 잠시만 기다려 주세요…',
+      )
+      continue
+    }
+
+    if (status === 'done') {
+      const text = String(job.text || '').trim()
+      if (!text) {
+        throw new Error('AI가 답변을 만들지 못했습니다.')
+      }
+      if (job.model && options?.onStatus) {
+        options.onStatus(
+          /pro/i.test(String(job.model))
+            ? 'Pro 분석 완료'
+            : '답변 완료',
+        )
+      }
+      return text
+    }
+
+    if (status === 'error') {
+      throw new Error(msg || 'AI 분석에 실패했습니다.')
+    }
+  }
+
+  throw new Error(
+    'Pro 분석 시간이 초과되었습니다. 사진을 줄이고 같은 질문을 다시 보내 주세요.',
+  )
+}
+
+/**
  * @param {{ role: string, content: string }[]} messages
  * @param {string} contextDescription
  * @param {{ dataUrl: string, label?: string }[]=} images
- * @param {{ skipRefine?: boolean, onStatus?: (msg: string) => void }=} options
+ * @param {{ skipRefine?: boolean, onStatus?: (msg: string) => void, practiceContext?: string, chatGuidance?: string, hasImages?: boolean }=} options
  */
 async function sendOpenAiChatStreaming(
   messages,
@@ -208,20 +325,35 @@ async function sendOpenAiChatStreaming(
  * @param {{ role: string, content: string }[]} messages
  * @param {string} contextDescription
  * @param {{ dataUrl: string, label?: string }[]=} images
- * @param {{ skipRefine?: boolean, maxAttempts?: number, onStatus?: (msg: string) => void }=} options
+ * @param {{ skipRefine?: boolean, maxAttempts?: number, onStatus?: (msg: string) => void, practiceContext?: string, chatGuidance?: string, hasImages?: boolean }=} options
  */
 export async function sendOpenAiChat(messages, contextDescription, images, options) {
   const deploy =
     import.meta.env.VITE_NETLIFY_DEPLOY === 'true' || import.meta.env.PROD === true
+  const useBackground = useAiChatBackground()
   const maxAttempts = Math.max(
     1,
     Math.min(deploy ? 2 : 3, options?.maxAttempts ?? (deploy ? 2 : 2)),
   )
 
+  const apiBody = {
+    messages,
+    contextDescription,
+    images,
+    skipRefine: true,
+    practiceContext: options?.practiceContext,
+    chatGuidance: options?.chatGuidance,
+    hasImages: options?.hasImages,
+  }
+
   let lastError = new Error('요청에 실패했습니다.')
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
+      if (useBackground) {
+        return await sendOpenAiChatViaBackgroundJob(apiBody, options)
+      }
+
       if (options?.stream !== false) {
         return await sendOpenAiChatStreaming(
           messages,
@@ -230,20 +362,11 @@ export async function sendOpenAiChat(messages, contextDescription, images, optio
           options,
         )
       }
-      const body = {
-        messages,
-        contextDescription,
-        images,
-        stream: false,
-        practiceContext: options?.practiceContext,
-        chatGuidance: options?.chatGuidance,
-        hasImages: options?.hasImages,
-      }
-      if (options?.skipRefine) body.skipRefine = true
+
       const res = await fetch(getChatApiUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...apiBody, stream: false }),
         signal: AbortSignal.timeout(getChatClientTimeoutMs()),
       })
       const raw = await res.text()

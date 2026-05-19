@@ -9,6 +9,8 @@
   VITE_NETLIFY_DEPLOY = "true"
   # Pro 채팅 시 클라이언트 이미지 압축 강화 (빌드에 포함)
   VITE_GEMINI_CHAT_MODEL = "gemini-2.5-pro"
+  # Pro 채팅: 26초 동기 한도 대신 Background Function + 폴링
+  VITE_AI_CHAT_BACKGROUND = "true"
 
 [functions]
   node_bundler = "esbuild"
@@ -45,6 +47,13 @@
 [[redirects]]
   from = "/api/auth/teacher/login"
   to = "/.netlify/functions/submissions-sync?mode=auth"
+  status = 200
+  force = true
+
+# Pro 채팅 백그라운드 작업 (26초 초과 분석)
+[[redirects]]
+  from = "/api/openai/chat/job"
+  to = "/.netlify/functions/ai-chat-jobs"
   status = 200
   force = true
 

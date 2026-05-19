@@ -7,6 +7,11 @@ import {
   runGeminiChatWithHeartbeat,
 } from './server/gemini-chat-core.mjs'
 import {
+  createPendingAiChatJob,
+  readAiChatJob,
+  writeAiChatJob,
+} from './server/ai-chat-jobs.mjs'
+import {
   applySubmissionEnvDefaults,
   loadEnvForMode,
 } from './server/load-env.mjs'
@@ -92,8 +97,99 @@ export default defineConfig(({ mode }) => {
             server.httpServer.requestTimeout = 0
             server.httpServer.headersTimeout = 0
           })
+
+          const runLocalAiJob = async (jobId, body) => {
+            const jobEnv = {
+              ...env,
+              GEMINI_NETLIFY_FAST: '0',
+              GEMINI_FETCH_TIMEOUT_MS: env.GEMINI_FETCH_TIMEOUT_MS || '120000',
+            }
+            try {
+              await writeAiChatJob(jobId, {
+                status: 'running',
+                message: 'Pro 모델로 분석하는 중입니다…',
+              })
+              const result = await runGeminiChatProxy(
+                { ...body, stream: false, skipRefine: true },
+                jobEnv,
+              )
+              if (!result.ok) {
+                let msg = '요청에 실패했습니다.'
+                try {
+                  msg = JSON.parse(result.body).error?.message || msg
+                } catch {
+                  /* ignore */
+                }
+                await writeAiChatJob(jobId, { status: 'error', message: msg })
+                return
+              }
+              let text = ''
+              let model = ''
+              try {
+                const j = JSON.parse(result.body)
+                text = j.choices?.[0]?.message?.content || ''
+                model = j.meta?.model || ''
+              } catch {
+                /* ignore */
+              }
+              if (!String(text).trim()) {
+                await writeAiChatJob(jobId, {
+                  status: 'error',
+                  message: 'AI가 답변을 만들지 못했습니다.',
+                })
+                return
+              }
+              await writeAiChatJob(jobId, {
+                status: 'done',
+                text: String(text).trim(),
+                model,
+              })
+            } catch (e) {
+              await writeAiChatJob(jobId, {
+                status: 'error',
+                message: e instanceof Error ? e.message : String(e),
+              })
+            }
+          }
+
           server.middlewares.use(async (req, res, next) => {
-            const pathname = req.url?.split('?')[0] || ''
+            const url = req.url || ''
+            const pathname = url.split('?')[0] || ''
+
+            if (pathname === '/api/openai/chat/job') {
+              if (req.method === 'GET') {
+                const q = new URL(url, 'http://localhost')
+                const jobId = q.searchParams.get('jobId') || ''
+                const job = await readAiChatJob(jobId)
+                res.statusCode = job ? 200 : 404
+                res.setHeader('Content-Type', 'application/json; charset=utf-8')
+                res.end(
+                  JSON.stringify(
+                    job || { error: { message: 'Job not found' } },
+                  ),
+                )
+                return
+              }
+              if (req.method === 'POST') {
+                const buf = await readBody(req)
+                let body
+                try {
+                  body = JSON.parse(buf.toString('utf8') || '{}')
+                } catch {
+                  res.statusCode = 400
+                  res.setHeader('Content-Type', 'application/json; charset=utf-8')
+                  res.end(JSON.stringify({ error: { message: 'Invalid JSON' } }))
+                  return
+                }
+                const jobId = await createPendingAiChatJob(body)
+                void runLocalAiJob(jobId, body)
+                res.statusCode = 202
+                res.setHeader('Content-Type', 'application/json; charset=utf-8')
+                res.end(JSON.stringify({ jobId, status: 'pending' }))
+                return
+              }
+            }
+
             if (pathname !== '/api/openai/chat' || req.method !== 'POST') {
               next()
               return

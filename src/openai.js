@@ -205,16 +205,9 @@ async function sendOpenAiChatStreaming(
     return text
   }
 
+  // 서버는 스트리밍, 화면에는 완성된 답만 한 번에 표시
   const text = await consumeNdjsonStream(res.body, {
     onStatus: (msg) => options?.onStatus?.(msg),
-    onChunk: (_chunk, accumulated) => {
-      if (accumulated.length > 0) {
-        options?.onPartial?.(accumulated)
-      }
-      if (accumulated.length > 0 && accumulated.length % 80 < 20) {
-        options?.onStatus?.('Pro 분석 중…')
-      }
-    },
   })
 
   if (!text) {

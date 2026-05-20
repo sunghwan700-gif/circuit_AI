@@ -1428,13 +1428,6 @@ async function sendChatMessage(
         }
         if (statusEl) statusEl.textContent = msg
       },
-      onPartial: (partial) => {
-        renderChatMessages(messagesEl, {
-          pendingAssistant: true,
-          pendingPartial: partial,
-        })
-        scrollChatToBottom(messagesEl)
-      },
     })
     state.messages.push({ role: 'assistant', content: reply })
   } catch (e) {
@@ -1467,12 +1460,11 @@ function scrollChatToBottom(container) {
 
 /**
  * @param {HTMLElement | null} container
- * @param {{ pendingAssistant?: boolean, pendingPartial?: string }} [opts]
+ * @param {{ pendingAssistant?: boolean }} [opts]
  */
 function renderChatMessages(container, opts = {}) {
   if (!container) return
   const pending = Boolean(opts.pendingAssistant)
-  const pendingPartial = String(opts.pendingPartial || '').trim()
   const turns = state.messages
     .map((m) => {
       const roleLabel = m.role === 'user' ? 'USER' : 'Circuit AI'
@@ -1497,13 +1489,9 @@ function renderChatMessages(container, opts = {}) {
       <div class="chat-turn__column">
         <span class="chat-turn__label">Circuit AI</span>
         <div class="chat-bubble chat-bubble--assistant chat-bubble--pending">
-          <div class="chat-bubble__content chat-bubble__content--pending">
-            ${
-              pendingPartial
-                ? `<div class="chat-bubble__streaming">${renderMarkdownLiteToHtml(pendingPartial)}</div>`
-                : `<span class="chat-spinner" aria-hidden="true"></span>
-            <span class="chat-pending-text">핵심만 정리하는 중…</span>`
-            }
+          <motion.div class="chat-bubble__content chat-bubble__content--pending">
+            <span class="chat-spinner" aria-hidden="true"></span>
+            <span class="chat-pending-text">답변을 작성하는 중…</span>
           </div>
         </div>
       </div>

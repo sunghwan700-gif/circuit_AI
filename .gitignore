@@ -13,6 +13,8 @@ dist-ssr
 *.local
 
 .env
+.env.vercel.kv
+.vercel
 server/data/
 server/data/ai-chat-jobs/
 # Editor directories and files
@@ -25,3 +27,6 @@ server/data/ai-chat-jobs/
 *.njsproj
 *.sln
 *.sw?
+
+.vercel
+.env*.local

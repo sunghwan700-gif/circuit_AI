@@ -6,12 +6,14 @@ import {
   runGeminiChatWithHeartbeat,
   deployEnv,
 } from '../_bundled/gemini-api.mjs'
-import { corsHeaders, withApiErrorGuard } from '../_bundled/http-utils.mjs'
+import {
+  streamNdjson,
+  corsHeaders,
+  withNodeHandler,
+} from '../_bundled/node-adapter.mjs'
 
-/** Hobby 60s / Pro 300s — 플랜 초과 시 배포·실행 오류 방지 */
 export const config = {
   maxDuration: 60,
-  runtime: 'nodejs',
 }
 
 function friendlyHandlerError(err) {
@@ -25,90 +27,54 @@ function friendlyHandlerError(err) {
   return msg || 'AI 요청 처리 중 오류가 발생했습니다.'
 }
 
-async function handler(request) {
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: corsHeaders() })
+export default withNodeHandler(async (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, corsHeaders())
+    res.end()
+    return
   }
 
-  if (request.method !== 'POST') {
-    return new Response(
-      JSON.stringify({ error: { message: 'Method Not Allowed' } }),
-      {
-        status: 405,
-        headers: {
-          ...corsHeaders(),
-          'Content-Type': 'application/json; charset=utf-8',
-        },
-      },
-    )
+  if (req.method !== 'POST') {
+    res.statusCode = 405
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.end(JSON.stringify({ error: { message: 'Method Not Allowed' } }))
+    return
   }
 
+  let body
   try {
-    let body
-    try {
-      body = await request.json()
-    } catch {
-      return new Response(JSON.stringify({ error: { message: 'Invalid JSON' } }), {
-        status: 400,
-        headers: {
-          ...corsHeaders(),
-          'Content-Type': 'application/json; charset=utf-8',
-        },
-      })
-    }
-
-    body.stream = true
-    const env = deployEnv()
-
-    const encoder = new TextEncoder()
-    const stream = new ReadableStream({
-      async start(controller) {
-        const push = (obj) => {
-          try {
-            controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`))
-          } catch {
-            /* client disconnected */
-          }
-        }
-        push({ event: 'status', message: '서버에 연결되었습니다…' })
-        try {
-          await runGeminiChatWithHeartbeat(body, env, push)
-        } catch (e) {
-          push({ event: 'error', message: friendlyHandlerError(e) })
-        } finally {
-          try {
-            controller.close()
-          } catch {
-            /* ignore */
-          }
-        }
-      },
-    })
-
-    return new Response(stream, {
-      status: 200,
-      headers: {
-        ...corsHeaders(),
-        'Content-Type': 'application/x-ndjson; charset=utf-8',
-        'Cache-Control': 'no-cache, no-transform',
-        Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      },
-    })
-  } catch (e) {
-    return new Response(
-      JSON.stringify({
-        error: { message: friendlyHandlerError(e) },
-      }),
-      {
-        status: 500,
-        headers: {
-          ...corsHeaders(),
-          'Content-Type': 'application/json; charset=utf-8',
-        },
-      },
-    )
+    const raw =
+      typeof req.body === 'string'
+        ? req.body
+        : req.body
+          ? JSON.stringify(req.body)
+          : await new Promise((resolve, reject) => {
+              const chunks = []
+              req.on('data', (c) => chunks.push(c))
+              req.on('end', () =>
+                resolve(Buffer.concat(chunks).toString('utf8')),
+              )
+              req.on('error', reject)
+            })
+    body = JSON.parse(raw || '{}')
+  } catch {
+    res.statusCode = 400
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.end(JSON.stringify({ error: { message: 'Invalid JSON' } }))
+    return
   }
-}
 
-export default withApiErrorGuard(handler)
+  body.stream = true
+  const env = deployEnv()
+
+  await streamNdjson(res, async (push) => {
+    push({ event: 'status', message: '서버에 연결되었습니다…' })
+    try {
+      await runGeminiChatWithHeartbeat(body, env, push)
+    } catch (e) {
+      push({ event: 'error', message: friendlyHandlerError(e) })
+    }
+  })
+})

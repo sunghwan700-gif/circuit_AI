@@ -1,26 +1,25 @@
 import { handleSubmissionsEvent } from '../../_bundled/submissions-handler.mjs'
 import {
-  requestToEvent,
-  lambdaResultToResponse,
+  reqToEvent,
+  sendLambdaResult,
   corsHeaders,
-  withApiErrorGuard,
-} from '../../_bundled/http-utils.mjs'
+  withNodeHandler,
+} from '../../_bundled/node-adapter.mjs'
 
 export const config = {
   maxDuration: 30,
-  runtime: 'nodejs',
 }
 
-async function handler(request) {
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: corsHeaders() })
+export default withNodeHandler(async (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, corsHeaders())
+    res.end()
+    return
   }
-  const event = await requestToEvent(request)
+  const event = await reqToEvent(req)
   event.queryStringParameters = {
     ...(event.queryStringParameters || {}),
     mode: 'auth',
   }
-  return lambdaResultToResponse(await handleSubmissionsEvent(event))
-}
-
-export default withApiErrorGuard(handler)
+  sendLambdaResult(res, await handleSubmissionsEvent(event))
+})

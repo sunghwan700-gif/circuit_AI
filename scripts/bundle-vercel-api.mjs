@@ -37,8 +37,8 @@ await esbuild.build({
 await esbuild.build({
   ...shared,
   absWorkingDir: ROOT,
-  entryPoints: [resolve(ROOT, 'server/vercel-http-entry.mjs')],
-  outfile: resolve(OUT_DIR, 'http-utils.mjs'),
+  entryPoints: [resolve(ROOT, 'server/vercel-node-adapter.mjs')],
+  outfile: resolve(OUT_DIR, 'node-adapter.mjs'),
 })
 
 console.log('Vercel API bundles written to api/_bundled/')

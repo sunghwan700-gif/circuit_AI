@@ -18,20 +18,17 @@
   ],
   "functions": {
     "api/ping.js": {
-      "runtime": "nodejs"
+      "maxDuration": 10
     },
     "api/submissions/**/*.js": {
-      "runtime": "nodejs",
       "maxDuration": 30,
       "includeFiles": "api/_bundled/**"
     },
     "api/auth/**/*.js": {
-      "runtime": "nodejs",
       "maxDuration": 30,
       "includeFiles": "api/_bundled/**"
     },
     "api/openai/**/*.js": {
-      "runtime": "nodejs",
       "maxDuration": 60,
       "includeFiles": "api/_bundled/**"
     }

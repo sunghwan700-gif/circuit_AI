@@ -81,11 +81,29 @@ async function prepareGeminiChatRequest(body, env) {
     modelCandidates = [...flashFirst, ...rest];
   }
   const syncProTight = isServerlessDeploy && useProPrimary && !isBgJob && preferFlashBody !== true && String(env.GEMINI_SYNC_PRO_TIGHT ?? "0").trim() === "1";
+  const earlyMsgList = (Array.isArray(messages) ? messages : []).filter((m) => {
+    const t = String(m?.content || "").trim();
+    if (m?.role === "user" && /^다음은 전기 실습/.test(t)) return false;
+    return true;
+  });
+  const earlyLastQ = (() => {
+    for (let i = earlyMsgList.length - 1; i >= 0; i--) {
+      if (earlyMsgList[i]?.role === "user") {
+        const t = String(earlyMsgList[i].content || "").trim();
+        if (t && !/^다음은 전기 실습/.test(t)) return t;
+      }
+    }
+    return "";
+  })();
+  const wantsDetail = isChatJob && /종합|전체|접점|단자|번호|표|목록|EOCR|MC|PB|릴레이|회로도.*작성|기입|정리|작성해/i.test(
+    `${earlyLastQ}
+${contextDescription}`
+  );
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || "").trim());
-  const defaultMaxTokens = useProPrimary ? syncProTight ? isChatJob ? 2048 : 2560 : isChatJob ? 2048 : 4096 : serverlessCompact ? 3584 : 6144;
+  const defaultMaxTokens = useProPrimary ? syncProTight ? isChatJob ? wantsDetail ? 3072 : 2048 : 2560 : isChatJob ? wantsDetail ? 4096 : 2048 : 4096 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
   const modelCandidatesRun = serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
-  const maxContinues = syncProTight && isChatJob ? 0 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 2 : useProPrimary ? 3 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
+  const maxContinues = syncProTight && isChatJob ? 0 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 3 : useProPrimary ? 3 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
   const retryDelaysMs = isBgJob ? [700, 1500, 3e3, 5e3, 8e3] : syncProTight ? [300, 700, 1200] : serverlessCompact ? [400, 900, 1800] : [250, 750, 1500, 3e3];
   const fetchTimeoutParsed = Number(String(env.GEMINI_FETCH_TIMEOUT_MS || "").trim());
   const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? syncProTight ? 23e3 : 24e3 : 12e4;
@@ -135,7 +153,11 @@ async function prepareGeminiChatRequest(body, env) {
 
 \uBAA9\uD45C: \uD559\uC2B5\uC790\uAC00 \uC2E4\uC2B5 \uC911 \uC9C8\uBB38\uD558\uACE0, \uD68C\uB85C\uB3C4\xB7\uC2E4\uC2B5 \uC0AC\uC9C4\uC744 \uADFC\uAC70\uB85C \uC815\uD655\uD55C \uD53C\uB4DC\uBC31\uC744 \uBC1B\uB3C4\uB85D \uB3D5\uC2B5\uB2C8\uB2E4.
 
-${isChatJob ? `\uCC44\uD305 \uB2F5\uBCC0 \uADDC\uCE59(\uD544\uC218 \u2014 \uC54C\uC9DC\uBC30\uAE30):
+${isChatJob ? wantsDetail ? `\uCC44\uD305 \uB2F5\uBCC0(\uC0C1\uC138 \uBAA9\uB85D\xB7\uD45C\xB7\uC811\uC810 \uBC88\uD638 \uC694\uCCAD):
+- \uB9C8\uC9C0\uB9C9 \uD559\uC0DD \uC9C8\uBB38\uC5D0\uB9CC \uB2F5\uD569\uB2C8\uB2E4.
+- \uBD84\uB7C9: \uCD5C\uB300 900\uC790. \uC2DC\uC791\uD55C \uBD88\uB9BF\xB7\uD56D\uBAA9\uC740 **\uBC18\uB4DC\uC2DC \uB05D\uAE4C\uC9C0 \uC644\uACB0**(\uC911\uAC04\uC5D0 ":" \uB4A4\uB85C \uB04A\uAE30\uBA74 \uC548 \uB428).
+- \uC811\uC810\xB7\uCF54\uC77C\xB7\uB2E8\uC790 \uBC88\uD638\uB294 **\uB3C4\uBA74\xB7\uC0AC\uC9C4\uC5D0 \uBCF4\uC774\uB294 \uD45C\uAE30\uB9CC**. \uC548 \uBCF4\uC774\uBA74 "\uB3C4\uBA74 \uD655\uC778 \uD544\uC694"\uB9CC \uC4F0\uACE0 \uBC88\uD638\uB97C \uC9C0\uC5B4\uB0B4\uC9C0 \uB9C8\uC138\uC694.
+- EOCR\xB7MC\xB7T\xB7PB\uB294 \uAE30\uAE30\uB9C8\uB2E4 \uD45C\uAE30\uAC00 \uB2E4\uB985\uB2C8\uB2E4. \uB2E4\uB978 \uAE30\uAE30 \uBC88\uD638(\uC608: MC\uC758 A1-A2\uB97C EOCR\uC5D0)\uB97C \uC11E\uC5B4 \uC4F0\uC9C0 \uB9C8\uC138\uC694.` : `\uCC44\uD305 \uB2F5\uBCC0 \uADDC\uCE59(\uD544\uC218 \u2014 \uC54C\uC9DC\uBC30\uAE30):
 - \uB9C8\uC9C0\uB9C9 \uD559\uC0DD \uC9C8\uBB38\uC5D0\uB9CC \uB2F5\uD569\uB2C8\uB2E4. \uC774\uC804 \uB2F5\xB7\uC9C8\uBB38\uACFC \uBB34\uAD00\uD55C \uD68C\uB85C \uC804\uCCB4 \uC124\uBA85\uC740 \uC4F0\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.
 - \uBD84\uB7C9: \uBCF4\uD1B5 \uC804\uCCB4 150~350\uC790(\uD55C\uAD6D\uC5B4). \uCD5C\uB300 500\uC790. \uBD88\uB9BF 3~5\uAC1C \uC774\uB0B4. \uBB38\uB2E8 2~3\uAC1C \uC774\uB0B4.
 - \uAD6C\uC870(\uC774 \uC21C\uC11C\uB9CC, **\uBC18\uB4DC\uC2DC \uB05D\uAE4C\uC9C0 \uC644\uACB0**): \u2460 \uD55C \uC904 \uD575\uC2EC \uACB0\uB860 \u2461 \uD655\uC778\uB41C \uADFC\uAC70 1~2\uAC1C (\uADFC\uAC70: \u2026) \u2462 \uC9C0\uAE08 \uD560 \uC77C 1~2\uAC00\uC9C0. \uC548\uC804 \uC774\uC288 \uC788\uC73C\uBA74 \uB9E8 \uC704 1\uBB38\uC7A5\uB9CC.
@@ -144,9 +166,11 @@ ${isChatJob ? `\uCC44\uD305 \uB2F5\uBCC0 \uADDC\uCE59(\uD544\uC218 \u2014 \uC54C
 - \u300C\uC885\uD569 \uBD84\uC11D\u300D\u300C\uC804\uCCB4 \uC810\uAC80\u300D\u300C\uCC98\uC74C\uBD80\uD130\u300D\uB97C \uBA85\uC2DC\uD55C \uACBD\uC6B0\uC5D0\uB9CC \uBD88\uB9BF 6~8\uAC1C\uAE4C\uC9C0 \uD5C8\uC6A9.
 - 1)~5) \uBC88\uD638 \uD615\uC2DD\uC740 \uD559\uC0DD\uC774 \uC885\uD569 \uBD84\uC11D\uC744 \uC694\uCCAD\uD560 \uB54C\uB9CC \uC0AC\uC6A9.` : ""}
 
-\uC815\uD655\uC131(\uD658\uAC01 \uBC29\uC9C0 \u2014 \uC9E7\uAC8C):
-- \uD655\uC778\uD55C \uC0AC\uC2E4\uB9CC \uC501\uB2C8\uB2E4. \uBD88\uD655\uC2E4\uD558\uBA74 "\uD655\uC778 \uD544\uC694" \uD55C \uC904.
-- \uCD94\uCE21\xB7\uAC00\uC0C1 \uB2E8\uC790\uBC88\uD638\xB7\uBC30\uC120 \uAE08\uC9C0. \uADFC\uAC70\uB294 \uAF2D \uD544\uC694\uD55C \uC8FC\uC7A5\uC5D0\uB9CC (\uADFC\uAC70: \u2026) 1\uD68C.
+\uC815\uD655\uC131(\uD658\uAC01 \uBC29\uC9C0):
+- \uD655\uC778\uD55C \uC0AC\uC2E4\uB9CC \uC501\uB2C8\uB2E4. \uBD88\uD655\uC2E4\uD558\uBA74 "\uB3C4\uBA74\xB7\uC2E4\uBB3C \uD655\uC778 \uD544\uC694" \uD55C \uC904.
+- \uC811\uC810\xB7\uCF54\uC77C\xB7\uB2E8\uC790 \uBC88\uD638(A1-A2, 95-96, 6-12 \uB4F1)\uB294 **\uB3C4\uBA74\xB7\uC0AC\uC9C4\uC5D0 \uBCF4\uC774\uB294 \uD45C\uAE30\uB9CC**. \uC548 \uBCF4\uC774\uBA74 \uCD94\uCE21\xB7\uC77C\uBC18\uB860 \uBC88\uD638\uB97C \uC4F0\uC9C0 \uB9C8\uC138\uC694.
+- EOCR\xB7MC\xB7T\xB7PB\uB294 \uAE30\uAE30\xB7\uC81C\uC870\uC0AC\uB9C8\uB2E4 \uD45C\uAE30\uAC00 \uB2E4\uB985\uB2C8\uB2E4. \uB2E4\uB978 \uAE30\uAE30 \uBC88\uD638\uB97C \uC11E\uC5B4 \uC4F0\uC9C0 \uB9C8\uC138\uC694.
+- \uCD94\uCE21\xB7\uAC00\uC0C1 \uBC30\uC120 \uAE08\uC9C0. \uADFC\uAC70\uB294 \uAF2D \uD544\uC694\uD55C \uC8FC\uC7A5\uC5D0\uB9CC (\uADFC\uAC70: \u2026) 1\uD68C.
 - \uD655\uC778 \uC9C8\uBB38\uC740 \uCD5C\uB300 1\uAC1C(\uC815\uB9D0 \uD544\uC694\uD560 \uB54C\uB9CC).
 
 \uD559\uC2B5\uC790 \uC218\uC900: \uC804\uAE30 \uCD08\uBCF4\uC790\uB3C4 \uC774\uD574\uD560 \uC218 \uC788\uAC8C, \uC804\uBB38 \uC6A9\uC5B4\uB294 \uAD04\uD638\uB85C \uC26C\uC6B4 \uB73B\uC744 \uBD99\uC785\uB2C8\uB2E4.
@@ -213,11 +237,12 @@ ${practiceExtra}` : ""}`;
       const attachNote = imageList.map((img) => String(img?.label || "")).filter(Boolean).join(", ");
       const qBlock = lastUserQuestion ? `\u3010\uC774\uBC88 \uD559\uC0DD \uC9C8\uBB38 \u2014 \uC774\uAC83\uC5D0\uB9CC \uB2F5\uD560 \uAC83\u3011
 ${lastUserQuestion}` : "\u3010\uC774\uBC88 \uD559\uC0DD \uC9C8\uBB38\u3011 (\uD14D\uC2A4\uD2B8 \uC5C6\uC74C \u2014 \uC774\uBBF8\uC9C0 \uAE30\uC900\uC73C\uB85C \uC9E7\uAC8C \uC548\uB0B4)";
+      const lengthHint = wantsDetail ? "\uC0C1\uC138 \uBAA9\uB85D\xB7\uD45C \uC694\uCCAD\uC774\uBA74 \uBD88\uB9BF\uC744 **\uB05D\uAE4C\uC9C0 \uC644\uACB0**\uD574 \uC8FC\uC138\uC694(\uCD5C\uB300 900\uC790). \uC811\uC810\xB7\uB2E8\uC790 \uBC88\uD638\uB294 \uB3C4\uBA74 \uD45C\uAE30\uB9CC, \uC5C6\uC73C\uBA74 \uCD94\uCE21 \uAE08\uC9C0." : "\uC9C8\uBB38\uC5D0 \uD544\uC694\uD55C \uBD80\uBD84\uB9CC \uC9E7\uAC8C \uB2F5\uD558\uC138\uC694(150~350\uC790, \uBD88\uB9BF 3~5\uAC1C). \uC804\uCCB4 \uD68C\uB85C \uAC15\uC758\xB7\uC7A5\uBB38 \uC124\uBA85 \uAE08\uC9C0.";
       contents[lastUserIdx].parts.unshift({
         text: `${qBlock}
 
 \u3010\uCC38\uACE0 \uC774\uBBF8\uC9C0\u3011${attachNote || "\uCCA8\uBD80\uB428"}
-\uC9C8\uBB38\uC5D0 \uD544\uC694\uD55C \uBD80\uBD84\uB9CC \uC9E7\uAC8C \uB2F5\uD558\uC138\uC694(150~350\uC790, \uBD88\uB9BF 3~5\uAC1C). \uC804\uCCB4 \uD68C\uB85C \uAC15\uC758\xB7\uC7A5\uBB38 \uC124\uBA85 \uAE08\uC9C0.`
+${lengthHint}`
       });
       for (const img of imageList) {
         const part = toInlinePart(img);
@@ -233,7 +258,7 @@ ${lastUserQuestion}` : "\u3010\uC774\uBC88 \uD559\uC0DD \uC9C8\uBB38\u3011 (\uD1
       maxOutputTokens,
       isChatJob,
       geminiFetchTimeoutMs,
-      temperature: isChatJob ? 0.18 : 0.12,
+      temperature: isChatJob ? 0.12 : 0.12,
       topP: isChatJob ? 0.85 : 0.9,
       serverlessCompact,
       syncProTight,
@@ -244,7 +269,8 @@ ${lastUserQuestion}` : "\u3010\uC774\uBC88 \uD559\uC0DD \uC9C8\uBB38\u3011 (\uD1
       hasImages,
       contextDescription,
       imageList,
-      lastUserQuestion
+      lastUserQuestion,
+      wantsDetail
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -332,7 +358,7 @@ async function runGeminiChatProxy(body, env) {
           },
           contents: contentsToSend,
           generationConfig: {
-            temperature: isChatJob ? 0.18 : 0.12,
+            temperature: isChatJob ? 0.12 : 0.12,
             topP: isChatJob ? 0.85 : 0.9,
             maxOutputTokens
           }
@@ -582,8 +608,14 @@ function looksTruncatedText(text, isChatJob = false) {
   const t = String(text || "").trim();
   if (!t) return false;
   if (isChatJob) {
+    const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean);
+    const lastLine = lines.length ? lines[lines.length - 1] : t;
+    if (/[:：]\s*$/.test(lastLine) || /[:：]\s*$/.test(t)) return true;
+    if (/^[-*•●\d]|^\s*\d+[.)]/.test(lastLine) && lastLine.length > 6 && !/[.!?。…』」\)]\s*$/.test(lastLine)) {
+      return true;
+    }
     const endsMid = /[가-힣0-9a-zA-Z(,（·]\s*$/.test(t) && !/[.!?。…』」\)]\s*$/.test(t);
-    if (endsMid && t.length >= 35) return true;
+    if (endsMid && t.length >= 25) return true;
     if (/확인된\s*근거|②|근거\s*[:：]/.test(t) && !/할\s*일|③|다음\s*할|지금\s*할|해야/i.test(t)) {
       return true;
     }
@@ -666,7 +698,7 @@ async function continueStreamedAnswer(prep, model, text, push) {
         role: "user",
         parts: [
           {
-            text: prep.isChatJob ? "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uB04A\uAE30\uC9C0 \uC54A\uAC8C \uC774\uC5B4\uC11C \uC368\uC918. \u2461 \uD655\uC778\uB41C \uADFC\uAC70\uC640 \u2462 \uC9C0\uAE08 \uD560 \uC77C\uC744 \uBC18\uB4DC\uC2DC \uC644\uACB0\uD574\uC918. \uC774\uBBF8 \uC4F4 \uBB38\uC7A5\uC740 \uBC18\uBCF5\uD558\uC9C0 \uB9C8." : "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uACC4\uC18D \uC791\uC131\uD574\uC918. \uB04A\uAE34 \uC9C0\uC810\uBD80\uD130 \uC774\uC5B4\uC11C. \uB05D\uAE4C\uC9C0 \uC644\uACB0\uD574\uC918."
+            text: prep.isChatJob ? prep.wantsDetail ? "\uBC29\uAE08 \uB2F5\uBCC0\uC774 \uC911\uAC04\uC5D0 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uBD88\uB9BF\xB7\uD56D\uBAA9(\uCF5C\uB860 \uB4A4 \uB0B4\uC6A9 \uD3EC\uD568)\uBD80\uD130 **\uB05D\uAE4C\uC9C0** \uC774\uC5B4 \uC4F0\uC138\uC694. \uC774\uBBF8 \uC4F4 \uBB38\uC7A5\uC740 \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694. \uC811\uC810\xB7\uB2E8\uC790 \uBC88\uD638\uB294 \uB3C4\uBA74\uC5D0 \uC5C6\uC73C\uBA74 \uCD94\uCE21\uD558\uC9C0 \uB9C8\uC138\uC694." : "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uB04A\uAE30\uC9C0 \uC54A\uAC8C \uC774\uC5B4\uC11C \uC368\uC918. \u2461 \uD655\uC778\uB41C \uADFC\uAC70\uC640 \u2462 \uC9C0\uAE08 \uD560 \uC77C\uC744 \uBC18\uB4DC\uC2DC \uC644\uACB0\uD574\uC918. \uC774\uBBF8 \uC4F4 \uBB38\uC7A5\uC740 \uBC18\uBCF5\uD558\uC9C0 \uB9C8." : "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uACC4\uC18D \uC791\uC131\uD574\uC918. \uB04A\uAE34 \uC9C0\uC810\uBD80\uD130 \uC774\uC5B4\uC11C. \uB05D\uAE4C\uC9C0 \uC644\uACB0\uD574\uC918."
           }
         ]
       }
@@ -775,8 +807,6 @@ async function streamOneGeminiModel(prep, model, push) {
   if (!streamed.text) return { ok: false, status: 502, message: "empty_response" };
   let text = streamed.text;
   if (needsContinueGeneration(streamed.finishReason, text, prep.isChatJob)) {
-    text = await continueStreamedAnswer(prep, model, text, push);
-  } else if (prep.isChatJob && looksTruncatedText(text, true)) {
     text = await continueStreamedAnswer(prep, model, text, push);
   }
   return { ok: true, text, model };

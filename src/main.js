@@ -1,5 +1,6 @@
 import './style.css'
 import {
+  formatAiModelLabel,
   isOpenAiProxyAvailable,
   normalizeChatFetchError,
   sendOpenAiChat,
@@ -1417,6 +1418,7 @@ async function sendChatMessage(
     const hasImages = images.length > 0
     const messagesForAi = trimMessagesForApi(state.messages, 12)
     let statusEl = messagesEl.querySelector('.chat-pending-text')
+    let aiModel = ''
     const reply = await sendOpenAiChat(messagesForAi, contextDescription, images, {
       skipRefine: true,
       practiceContext: buildPracticeContextForAi(),
@@ -1428,8 +1430,13 @@ async function sendChatMessage(
         }
         if (statusEl) statusEl.textContent = msg
       },
+      onMeta: ({ model }) => {
+        aiModel = String(model || '').trim()
+      },
     })
-    state.messages.push({ role: 'assistant', content: reply })
+    const modelLabel = formatAiModelLabel(aiModel)
+    const replyWithMeta = modelLabel ? `${reply}\n\n— ${modelLabel}` : reply
+    state.messages.push({ role: 'assistant', content: replyWithMeta })
   } catch (e) {
     const msg = normalizeChatFetchError(e)
     const isQuotaError =

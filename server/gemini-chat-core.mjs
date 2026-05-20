@@ -122,14 +122,38 @@ export async function prepareGeminiChatRequest(body, env) {
     preferFlashBody !== true &&
     String(env.GEMINI_SYNC_PRO_TIGHT ?? '0').trim() === '1'
 
+  const earlyMsgList = (Array.isArray(messages) ? messages : []).filter((m) => {
+    const t = String(m?.content || '').trim()
+    if (m?.role === 'user' && /^다음은 전기 실습/.test(t)) return false
+    return true
+  })
+  const earlyLastQ = (() => {
+    for (let i = earlyMsgList.length - 1; i >= 0; i--) {
+      if (earlyMsgList[i]?.role === 'user') {
+        const t = String(earlyMsgList[i].content || '').trim()
+        if (t && !/^다음은 전기 실습/.test(t)) return t
+      }
+    }
+    return ''
+  })()
+  const wantsDetail =
+    isChatJob &&
+    /종합|전체|접점|단자|번호|표|목록|EOCR|MC|PB|릴레이|회로도.*작성|기입|정리|작성해/i.test(
+      `${earlyLastQ}\n${contextDescription}`,
+    )
+
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
   const defaultMaxTokens = useProPrimary
     ? syncProTight
       ? isChatJob
-        ? 2048
+        ? wantsDetail
+          ? 3072
+          : 2048
         : 2560
       : isChatJob
-        ? 2048
+        ? wantsDetail
+          ? 4096
+          : 2048
         : 4096
     : serverlessCompact
       ? 3584
@@ -153,7 +177,7 @@ export async function prepareGeminiChatRequest(body, env) {
         ? 2
         : isChatJob
           ? isServerlessDeploy
-            ? 2
+            ? 3
             : useProPrimary
               ? 3
               : 2
@@ -243,7 +267,13 @@ export async function prepareGeminiChatRequest(body, env) {
 
 ${
     isChatJob
-      ? `채팅 답변 규칙(필수 — 알짜배기):
+      ? wantsDetail
+        ? `채팅 답변(상세 목록·표·접점 번호 요청):
+- 마지막 학생 질문에만 답합니다.
+- 분량: 최대 900자. 시작한 불릿·항목은 **반드시 끝까지 완결**(중간에 ":" 뒤로 끊기면 안 됨).
+- 접점·코일·단자 번호는 **도면·사진에 보이는 표기만**. 안 보이면 "도면 확인 필요"만 쓰고 번호를 지어내지 마세요.
+- EOCR·MC·T·PB는 기기마다 표기가 다릅니다. 다른 기기 번호(예: MC의 A1-A2를 EOCR에)를 섞어 쓰지 마세요.`
+        : `채팅 답변 규칙(필수 — 알짜배기):
 - 마지막 학생 질문에만 답합니다. 이전 답·질문과 무관한 회로 전체 설명은 쓰지 않습니다.
 - 분량: 보통 전체 150~350자(한국어). 최대 500자. 불릿 3~5개 이내. 문단 2~3개 이내.
 - 구조(이 순서만, **반드시 끝까지 완결**): ① 한 줄 핵심 결론 ② 확인된 근거 1~2개 (근거: …) ③ 지금 할 일 1~2가지. 안전 이슈 있으면 맨 위 1문장만.
@@ -254,9 +284,11 @@ ${
       : ''
   }
 
-정확성(환각 방지 — 짧게):
-- 확인한 사실만 씁니다. 불확실하면 "확인 필요" 한 줄.
-- 추측·가상 단자번호·배선 금지. 근거는 꼭 필요한 주장에만 (근거: …) 1회.
+정확성(환각 방지):
+- 확인한 사실만 씁니다. 불확실하면 "도면·실물 확인 필요" 한 줄.
+- 접점·코일·단자 번호(A1-A2, 95-96, 6-12 등)는 **도면·사진에 보이는 표기만**. 안 보이면 추측·일반론 번호를 쓰지 마세요.
+- EOCR·MC·T·PB는 기기·제조사마다 표기가 다릅니다. 다른 기기 번호를 섞어 쓰지 마세요.
+- 추측·가상 배선 금지. 근거는 꼭 필요한 주장에만 (근거: …) 1회.
 - 확인 질문은 최대 1개(정말 필요할 때만).
 
 학습자 수준: 전기 초보자도 이해할 수 있게, 전문 용어는 괄호로 쉬운 뜻을 붙입니다.
@@ -337,8 +369,11 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       const qBlock = lastUserQuestion
         ? `【이번 학생 질문 — 이것에만 답할 것】\n${lastUserQuestion}`
         : '【이번 학생 질문】 (텍스트 없음 — 이미지 기준으로 짧게 안내)'
+      const lengthHint = wantsDetail
+        ? '상세 목록·표 요청이면 불릿을 **끝까지 완결**해 주세요(최대 900자). 접점·단자 번호는 도면 표기만, 없으면 추측 금지.'
+        : '질문에 필요한 부분만 짧게 답하세요(150~350자, 불릿 3~5개). 전체 회로 강의·장문 설명 금지.'
       contents[lastUserIdx].parts.unshift({
-        text: `${qBlock}\n\n【참고 이미지】${attachNote || '첨부됨'}\n질문에 필요한 부분만 짧게 답하세요(150~350자, 불릿 3~5개). 전체 회로 강의·장문 설명 금지.`,
+        text: `${qBlock}\n\n【참고 이미지】${attachNote || '첨부됨'}\n${lengthHint}`,
       })
 
       for (const img of imageList) {
@@ -356,7 +391,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       maxOutputTokens,
       isChatJob,
       geminiFetchTimeoutMs,
-      temperature: isChatJob ? 0.18 : 0.12,
+      temperature: isChatJob ? 0.12 : 0.12,
       topP: isChatJob ? 0.85 : 0.9,
       serverlessCompact,
       syncProTight,
@@ -368,6 +403,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       contextDescription,
       imageList,
       lastUserQuestion,
+      wantsDetail,
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -483,7 +519,7 @@ export async function runGeminiChatProxy(body, env) {
           },
           contents: contentsToSend,
             generationConfig: {
-              temperature: isChatJob ? 0.18 : 0.12,
+              temperature: isChatJob ? 0.12 : 0.12,
               topP: isChatJob ? 0.85 : 0.9,
               maxOutputTokens,
             },
@@ -791,10 +827,23 @@ function looksTruncatedText(text, isChatJob = false) {
   if (!t) return false
 
   if (isChatJob) {
+    const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean)
+    const lastLine = lines.length ? lines[lines.length - 1] : t
+
+    if (/[:：]\s*$/.test(lastLine) || /[:：]\s*$/.test(t)) return true
+
+    if (
+      /^[-*•●\d]|^\s*\d+[.)]/.test(lastLine) &&
+      lastLine.length > 6 &&
+      !/[.!?。…』」\)]\s*$/.test(lastLine)
+    ) {
+      return true
+    }
+
     const endsMid =
       /[가-힣0-9a-zA-Z(,（·]\s*$/.test(t) &&
       !/[.!?。…』」\)]\s*$/.test(t)
-    if (endsMid && t.length >= 35) return true
+    if (endsMid && t.length >= 25) return true
     if (
       /확인된\s*근거|②|근거\s*[:：]/.test(t) &&
       !/할\s*일|③|다음\s*할|지금\s*할|해야/i.test(t)
@@ -904,7 +953,9 @@ async function continueStreamedAnswer(prep, model, text, push) {
         parts: [
           {
             text: prep.isChatJob
-              ? '방금 답변을 끊기지 않게 이어서 써줘. ② 확인된 근거와 ③ 지금 할 일을 반드시 완결해줘. 이미 쓴 문장은 반복하지 마.'
+              ? prep.wantsDetail
+                ? '방금 답변이 중간에 끊겼습니다. 끊긴 불릿·항목(콜론 뒤 내용 포함)부터 **끝까지** 이어 쓰세요. 이미 쓴 문장은 반복하지 마세요. 접점·단자 번호는 도면에 없으면 추측하지 마세요.'
+                : '방금 답변을 끊기지 않게 이어서 써줘. ② 확인된 근거와 ③ 지금 할 일을 반드시 완결해줘. 이미 쓴 문장은 반복하지 마.'
               : '방금 답변을 이어서 계속 작성해줘. 끊긴 지점부터 이어서. 끝까지 완결해줘.',
           },
         ],
@@ -1031,8 +1082,6 @@ async function streamOneGeminiModel(prep, model, push) {
 
   let text = streamed.text
   if (needsContinueGeneration(streamed.finishReason, text, prep.isChatJob)) {
-    text = await continueStreamedAnswer(prep, model, text, push)
-  } else if (prep.isChatJob && looksTruncatedText(text, true)) {
     text = await continueStreamedAnswer(prep, model, text, push)
   }
 

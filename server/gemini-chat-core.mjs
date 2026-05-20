@@ -180,15 +180,13 @@ export async function prepareGeminiChatRequest(body, env) {
       : useProPrimary
         ? syncProTight
           ? isChatJob
-            ? wantsDetail
-              ? 2048
-              : 1536
-            : 2048
+            ? 3072
+            : 2560
           : isChatJob
             ? wantsDetail
-              ? 2048
-              : 2048
-            : 2048
+              ? 4096
+              : 3072
+            : 2560
     : serverlessCompact
       ? 3584
       : 6144
@@ -217,9 +215,9 @@ export async function prepareGeminiChatRequest(body, env) {
           ? 2
           : isChatJob
             ? isServerlessDeploy
-              ? 3
+              ? 4
               : useProPrimary
-                ? 3
+                ? 4
                 : 2
             : useProPrimary
             ? syncProTight
@@ -245,6 +243,11 @@ export async function prepareGeminiChatRequest(body, env) {
           ? 23_000
           : 24_000
         : 120_000
+
+  const preferOneshot =
+    isServerlessDeploy &&
+    !isBgJob &&
+    String(env.GEMINI_STREAM_CHAT ?? '0').trim() !== '1'
 
   const imageList = Array.isArray(images) ? images : []
   const hasImages =
@@ -315,17 +318,18 @@ ${
       : isTeacherDraftJob
         ? `【교사 피드백 초안】
 - 제출 SWOT·자기평가·사진만 근거로 피드백 초안 작성.
-- **짧은 개요형**: ## 총평(1~2문장) → ## 잘한 점(불릿 1~2) → ## 보완(불릿 1~2) → ## 안전(해당 시 1문장). **250~450자**.
-- 제출에 없는 사실·단자 번호 금지.`
+- **한 번에 완결**: ## 총평(2~3문장) → ## 잘한 점(불릿 2~3) → ## 보완·다음 실습(불릿 2~3) → ## 안전·확인(해당 시 1~2문장). **400~650자**.
+- 중요 내용은 빠뜨리지 말되 장황한 반복은 금지. 제출에 없는 사실·단자 번호 금지.`
         : isChatJob
           ? wantsDetail
             ? `채팅(상세·목록·접점):
-- 질문에 직접 답함. ## 요약(1줄) → ## 핵심(불릿 3~5, 끝까지 완결). **최대 500자**.
+- 질문에 직접 답함. **한 번에 끝까지**: ## 요약 → ## 핵심(불릿 4~6, 각 1문장 완결) → ## 할 일(2~3). **500~750자**.
 - 접점·단자는 도면 표기만.`
-            : `채팅 답변(요약형):
+            : `채팅 답변(균형형):
 - 마지막 질문에 **직접** 답함. 동문서답·강의 금지.
-- 형식: ## 요약(1줄) → ## 핵심(불릿 2~3) → ## 할 일(불릿 1~2). 안전은 맨 위 ## 안전(1문장).
-- **200~380자**. 짧고 명확하게.`
+- **한 번에 세 섹션 모두 완결**: ## 요약(1~2문장) → ## 핵심(불릿 3~4, 구체적) → ## 할 일(불릿 2~3). 안전 이슈는 맨 위 ## 안전(1~2문장).
+- 분량 **350~550자**. 너무 짧게 생략하지 말고, 불필요한 장문·반복은 금지.
+- 모든 불릿을 문장으로 끝낸 뒤 종료하세요.`
           : ''
   }
 
@@ -421,12 +425,12 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
             ? `【이번 학생 질문 — 이것에만 답할 것】\n${lastUserQuestion}`
             : '【이번 학생 질문】 (텍스트 없음 — 이미지 기준으로 안내)'
       const lengthHint = isReportJsonJob
-        ? 'JSON만. summary 2~4문장, swot 각 1문장. 대화·SWOT 반영.'
+        ? 'JSON만. summary 3~5문장, swot 각 1~2문장. 한 번에 완전한 JSON.'
         : isTeacherDraftJob
-          ? '교사 피드백 초안: ## 총평·잘한 점·보완, 250~450자.'
+          ? '피드백 초안: ## 총평·잘한 점·보완·안전 모두 작성, 400~650자.'
           : wantsDetail
-            ? '## 요약 + 불릿 3~5개, 최대 500자. 끝까지 완결.'
-            : '## 요약·핵심·할 일, 200~380자. 짧게 요약.'
+            ? '## 요약·핵심·할 일을 한 번에 완결, 500~750자.'
+            : '## 요약·핵심·할 일을 한 번에 완결, 350~550자. 중요 내용 포함.'
       contents[lastUserIdx].parts.unshift({
         text: `${qBlock}\n\n【참고 이미지】${attachNote || '첨부됨'}\n${lengthHint}`,
       })
@@ -462,6 +466,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       isReportJsonJob,
       isTeacherDraftJob,
       proOnly,
+      preferOneshot,
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -1069,10 +1074,16 @@ async function geminiGenerateOnce(prep, model, contents) {
 }
 
 /** @param {object} prep @param {string} model @param {string} text @param {(obj: object) => void} push */
-async function continueStreamedAnswer(prep, model, text, push) {
-  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 4)
+async function finalizeGeminiAnswer(
+  prep,
+  model,
+  text,
+  push,
+  initialFinishReason = '',
+) {
+  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 5)
   let out = String(text || '').trim()
-  let finishReason = ''
+  let finishReason = String(initialFinishReason || '')
 
   for (let i = 0; i < maxRounds; i++) {
     if (!needsContinueForPrep(finishReason, out, prep)) break
@@ -1108,6 +1119,9 @@ async function continueStreamedAnswer(prep, model, text, push) {
   }
   return out
 }
+
+/** @deprecated alias */
+const continueStreamedAnswer = finalizeGeminiAnswer
 
 /** @param {unknown} obj */
 function extractStreamChunkText(obj) {
@@ -1174,6 +1188,22 @@ async function consumeGeminiSseStream(body, onText) {
 
 /** @param {object} prep @param {string} model @param {(obj: object) => void} push */
 async function streamOneGeminiModel(prep, model, push) {
+  if (prep.preferOneshot) {
+    push({ event: 'status', message: 'Pro 분석 중…' })
+    const hit = await geminiGenerateOnce(prep, model, prep.contents)
+    if (!hit.ok) {
+      return { ok: false, status: hit.status, message: hit.message }
+    }
+    const text = await finalizeGeminiAnswer(
+      prep,
+      model,
+      hit.text,
+      push,
+      hit.finishReason,
+    )
+    return { ok: true, text, model }
+  }
+
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model,
   )}:streamGenerateContent?alt=sse`
@@ -1216,10 +1246,13 @@ async function streamOneGeminiModel(prep, model, push) {
   })
   if (!streamed.text) return { ok: false, status: 502, message: 'empty_response' }
 
-  let text = streamed.text
-  if (needsContinueForPrep(streamed.finishReason, text, prep)) {
-    text = await continueStreamedAnswer(prep, model, text, push)
-  }
+  const text = await finalizeGeminiAnswer(
+    prep,
+    model,
+    streamed.text,
+    push,
+    streamed.finishReason,
+  )
 
   return { ok: true, text, model }
 }

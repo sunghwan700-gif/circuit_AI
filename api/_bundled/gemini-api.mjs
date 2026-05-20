@@ -115,13 +115,14 @@ async function prepareGeminiChatRequest(body, env) {
 ${contextDescription}`
   );
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || "").trim());
-  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 2048 : 1792 : isTeacherDraftJob ? useProPrimary ? 1536 : 1280 : useProPrimary ? syncProTight ? isChatJob ? wantsDetail ? 2048 : 1536 : 2048 : isChatJob ? wantsDetail ? 2048 : 2048 : 2048 : serverlessCompact ? 3584 : 6144;
+  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 2048 : 1792 : isTeacherDraftJob ? useProPrimary ? 1536 : 1280 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
   const modelCandidatesRun = proOnly ? modelCandidates.slice(0, 1) : serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
-  const maxContinues = syncProTight && isChatJob ? 0 : isReportJsonJob || isTeacherDraftJob ? isServerlessDeploy ? 2 : 3 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 3 : useProPrimary ? 3 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
+  const maxContinues = syncProTight && isChatJob ? 0 : isReportJsonJob || isTeacherDraftJob ? isServerlessDeploy ? 2 : 3 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 4 : useProPrimary ? 4 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
   const retryDelaysMs = isBgJob ? [700, 1500, 3e3, 5e3, 8e3] : syncProTight ? [300, 700, 1200] : serverlessCompact ? [400, 900, 1800] : [250, 750, 1500, 3e3];
   const fetchTimeoutParsed = Number(String(env.GEMINI_FETCH_TIMEOUT_MS || "").trim());
   const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? syncProTight ? 23e3 : 24e3 : 12e4;
+  const preferOneshot = isServerlessDeploy && !isBgJob && String(env.GEMINI_STREAM_CHAT ?? "0").trim() !== "1";
   const imageList = Array.isArray(images) ? images : [];
   const hasImages = imageList.length > 0 || hasImagesBody === true || hasImagesBody === "true";
   const getLastUserQuestion = (list) => {
@@ -174,13 +175,14 @@ ${isReportJsonJob ? `\u3010\uBCF4\uACE0\uC11C JSON \uC791\uC5C5\u3011
 - Circuit Chatbot \uB300\uD654\xB7\uCCA8\uBD80 \uC774\uBBF8\uC9C0\xB7\uC790\uAE30\uD3C9\uAC00\xB7\uD559\uC2B5\uC790 SWOT \uCD08\uC548\uC744 **\uD568\uAED8 \uC77D\uACE0** \uC77C\uAD00\uB41C \uC885\uD569 \uD53C\uB4DC\uBC31\uC744 \uB9CC\uB4ED\uB2C8\uB2E4. \uB300\uD654\uB97C \uBB34\uC2DC\uD55C \uC77C\uBC18\uB860\xB7\uB3D9\uBB38\uC11C\uB2F5 \uAE08\uC9C0.
 - \uC790\uB8CC\uC5D0 \uC5C6\uB294 \uB2E8\uC790\xB7\uBC30\uC120\xB7\uACE0\uC7A5 \uB2E8\uC815 \uAE08\uC9C0.` : isTeacherDraftJob ? `\u3010\uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548\u3011
 - \uC81C\uCD9C SWOT\xB7\uC790\uAE30\uD3C9\uAC00\xB7\uC0AC\uC9C4\uB9CC \uADFC\uAC70\uB85C \uD53C\uB4DC\uBC31 \uCD08\uC548 \uC791\uC131.
-- **\uC9E7\uC740 \uAC1C\uC694\uD615**: ## \uCD1D\uD3C9(1~2\uBB38\uC7A5) \u2192 ## \uC798\uD55C \uC810(\uBD88\uB9BF 1~2) \u2192 ## \uBCF4\uC644(\uBD88\uB9BF 1~2) \u2192 ## \uC548\uC804(\uD574\uB2F9 \uC2DC 1\uBB38\uC7A5). **250~450\uC790**.
-- \uC81C\uCD9C\uC5D0 \uC5C6\uB294 \uC0AC\uC2E4\xB7\uB2E8\uC790 \uBC88\uD638 \uAE08\uC9C0.` : isChatJob ? wantsDetail ? `\uCC44\uD305(\uC0C1\uC138\xB7\uBAA9\uB85D\xB7\uC811\uC810):
-- \uC9C8\uBB38\uC5D0 \uC9C1\uC811 \uB2F5\uD568. ## \uC694\uC57D(1\uC904) \u2192 ## \uD575\uC2EC(\uBD88\uB9BF 3~5, \uB05D\uAE4C\uC9C0 \uC644\uACB0). **\uCD5C\uB300 500\uC790**.
-- \uC811\uC810\xB7\uB2E8\uC790\uB294 \uB3C4\uBA74 \uD45C\uAE30\uB9CC.` : `\uCC44\uD305 \uB2F5\uBCC0(\uC694\uC57D\uD615):
+- **\uD55C \uBC88\uC5D0 \uC644\uACB0**: ## \uCD1D\uD3C9(2~3\uBB38\uC7A5) \u2192 ## \uC798\uD55C \uC810(\uBD88\uB9BF 2~3) \u2192 ## \uBCF4\uC644\xB7\uB2E4\uC74C \uC2E4\uC2B5(\uBD88\uB9BF 2~3) \u2192 ## \uC548\uC804\xB7\uD655\uC778(\uD574\uB2F9 \uC2DC 1~2\uBB38\uC7A5). **400~650\uC790**.
+- \uC911\uC694 \uB0B4\uC6A9\uC740 \uBE60\uB728\uB9AC\uC9C0 \uB9D0\uB418 \uC7A5\uD669\uD55C \uBC18\uBCF5\uC740 \uAE08\uC9C0. \uC81C\uCD9C\uC5D0 \uC5C6\uB294 \uC0AC\uC2E4\xB7\uB2E8\uC790 \uBC88\uD638 \uAE08\uC9C0.` : isChatJob ? wantsDetail ? `\uCC44\uD305(\uC0C1\uC138\xB7\uBAA9\uB85D\xB7\uC811\uC810):
+- \uC9C8\uBB38\uC5D0 \uC9C1\uC811 \uB2F5\uD568. **\uD55C \uBC88\uC5D0 \uB05D\uAE4C\uC9C0**: ## \uC694\uC57D \u2192 ## \uD575\uC2EC(\uBD88\uB9BF 4~6, \uAC01 1\uBB38\uC7A5 \uC644\uACB0) \u2192 ## \uD560 \uC77C(2~3). **500~750\uC790**.
+- \uC811\uC810\xB7\uB2E8\uC790\uB294 \uB3C4\uBA74 \uD45C\uAE30\uB9CC.` : `\uCC44\uD305 \uB2F5\uBCC0(\uADE0\uD615\uD615):
 - \uB9C8\uC9C0\uB9C9 \uC9C8\uBB38\uC5D0 **\uC9C1\uC811** \uB2F5\uD568. \uB3D9\uBB38\uC11C\uB2F5\xB7\uAC15\uC758 \uAE08\uC9C0.
-- \uD615\uC2DD: ## \uC694\uC57D(1\uC904) \u2192 ## \uD575\uC2EC(\uBD88\uB9BF 2~3) \u2192 ## \uD560 \uC77C(\uBD88\uB9BF 1~2). \uC548\uC804\uC740 \uB9E8 \uC704 ## \uC548\uC804(1\uBB38\uC7A5).
-- **200~380\uC790**. \uC9E7\uACE0 \uBA85\uD655\uD558\uAC8C.` : ""}
+- **\uD55C \uBC88\uC5D0 \uC138 \uC139\uC158 \uBAA8\uB450 \uC644\uACB0**: ## \uC694\uC57D(1~2\uBB38\uC7A5) \u2192 ## \uD575\uC2EC(\uBD88\uB9BF 3~4, \uAD6C\uCCB4\uC801) \u2192 ## \uD560 \uC77C(\uBD88\uB9BF 2~3). \uC548\uC804 \uC774\uC288\uB294 \uB9E8 \uC704 ## \uC548\uC804(1~2\uBB38\uC7A5).
+- \uBD84\uB7C9 **350~550\uC790**. \uB108\uBB34 \uC9E7\uAC8C \uC0DD\uB7B5\uD558\uC9C0 \uB9D0\uACE0, \uBD88\uD544\uC694\uD55C \uC7A5\uBB38\xB7\uBC18\uBCF5\uC740 \uAE08\uC9C0.
+- \uBAA8\uB4E0 \uBD88\uB9BF\uC744 \uBB38\uC7A5\uC73C\uB85C \uB05D\uB0B8 \uB4A4 \uC885\uB8CC\uD558\uC138\uC694.` : ""}
 
 \uC815\uD655\uC131(\uD658\uAC01 \uBC29\uC9C0):
 - \uD655\uC778\uD55C \uC0AC\uC2E4\uB9CC \uC501\uB2C8\uB2E4. \uBD88\uD655\uC2E4\uD558\uBA74 "\uB3C4\uBA74\xB7\uC2E4\uBB3C \uD655\uC778 \uD544\uC694" \uD55C \uC904.
@@ -247,7 +249,7 @@ ${practiceExtra}` : ""}`;
       const qBlock = isReportJsonJob || isTeacherDraftJob ? `\u3010\uC791\uC5C5 \uC9C0\uC2DC\u3011
 ${lastUserQuestion || "(\uC9C0\uC2DC\uBB38 \uCC38\uACE0)"}` : lastUserQuestion ? `\u3010\uC774\uBC88 \uD559\uC0DD \uC9C8\uBB38 \u2014 \uC774\uAC83\uC5D0\uB9CC \uB2F5\uD560 \uAC83\u3011
 ${lastUserQuestion}` : "\u3010\uC774\uBC88 \uD559\uC0DD \uC9C8\uBB38\u3011 (\uD14D\uC2A4\uD2B8 \uC5C6\uC74C \u2014 \uC774\uBBF8\uC9C0 \uAE30\uC900\uC73C\uB85C \uC548\uB0B4)";
-      const lengthHint = isReportJsonJob ? "JSON\uB9CC. summary 2~4\uBB38\uC7A5, swot \uAC01 1\uBB38\uC7A5. \uB300\uD654\xB7SWOT \uBC18\uC601." : isTeacherDraftJob ? "\uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548: ## \uCD1D\uD3C9\xB7\uC798\uD55C \uC810\xB7\uBCF4\uC644, 250~450\uC790." : wantsDetail ? "## \uC694\uC57D + \uBD88\uB9BF 3~5\uAC1C, \uCD5C\uB300 500\uC790. \uB05D\uAE4C\uC9C0 \uC644\uACB0." : "## \uC694\uC57D\xB7\uD575\uC2EC\xB7\uD560 \uC77C, 200~380\uC790. \uC9E7\uAC8C \uC694\uC57D.";
+      const lengthHint = isReportJsonJob ? "JSON\uB9CC. summary 3~5\uBB38\uC7A5, swot \uAC01 1~2\uBB38\uC7A5. \uD55C \uBC88\uC5D0 \uC644\uC804\uD55C JSON." : isTeacherDraftJob ? "\uD53C\uB4DC\uBC31 \uCD08\uC548: ## \uCD1D\uD3C9\xB7\uC798\uD55C \uC810\xB7\uBCF4\uC644\xB7\uC548\uC804 \uBAA8\uB450 \uC791\uC131, 400~650\uC790." : wantsDetail ? "## \uC694\uC57D\xB7\uD575\uC2EC\xB7\uD560 \uC77C\uC744 \uD55C \uBC88\uC5D0 \uC644\uACB0, 500~750\uC790." : "## \uC694\uC57D\xB7\uD575\uC2EC\xB7\uD560 \uC77C\uC744 \uD55C \uBC88\uC5D0 \uC644\uACB0, 350~550\uC790. \uC911\uC694 \uB0B4\uC6A9 \uD3EC\uD568.";
       contents[lastUserIdx].parts.unshift({
         text: `${qBlock}
 
@@ -283,7 +285,8 @@ ${lengthHint}`
       wantsDetail,
       isReportJsonJob,
       isTeacherDraftJob,
-      proOnly
+      proOnly,
+      preferOneshot
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -743,10 +746,10 @@ async function geminiGenerateOnce(prep, model, contents) {
   if (!text) return { ok: false, status: 502, message: "empty_response" };
   return { ok: true, text, finishReason };
 }
-async function continueStreamedAnswer(prep, model, text, push) {
-  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 4);
+async function finalizeGeminiAnswer(prep, model, text, push, initialFinishReason = "") {
+  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 5);
   let out = String(text || "").trim();
-  let finishReason = "";
+  let finishReason = String(initialFinishReason || "");
   for (let i = 0; i < maxRounds; i++) {
     if (!needsContinueForPrep(finishReason, out, prep)) break;
     push({ event: "status", message: "\uB2F5\uBCC0 \uB9C8\uBB34\uB9AC \uC911\u2026" });
@@ -827,6 +830,21 @@ async function consumeGeminiSseStream(body, onText) {
   return { text: full.trim(), finishReason };
 }
 async function streamOneGeminiModel(prep, model, push) {
+  if (prep.preferOneshot) {
+    push({ event: "status", message: "Pro \uBD84\uC11D \uC911\u2026" });
+    const hit = await geminiGenerateOnce(prep, model, prep.contents);
+    if (!hit.ok) {
+      return { ok: false, status: hit.status, message: hit.message };
+    }
+    const text2 = await finalizeGeminiAnswer(
+      prep,
+      model,
+      hit.text,
+      push,
+      hit.finishReason
+    );
+    return { ok: true, text: text2, model };
+  }
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model
   )}:streamGenerateContent?alt=sse`;
@@ -864,10 +882,13 @@ async function streamOneGeminiModel(prep, model, push) {
     push({ event: "chunk", text: chunk });
   });
   if (!streamed.text) return { ok: false, status: 502, message: "empty_response" };
-  let text = streamed.text;
-  if (needsContinueForPrep(streamed.finishReason, text, prep)) {
-    text = await continueStreamedAnswer(prep, model, text, push);
-  }
+  const text = await finalizeGeminiAnswer(
+    prep,
+    model,
+    streamed.text,
+    push,
+    streamed.finishReason
+  );
   return { ok: true, text, model };
 }
 async function runGeminiChatBufferedFallback(body, env, push) {
@@ -968,7 +989,7 @@ function deployEnv(extra = {}) {
     VERCEL: onVercel ? "1" : process.env.VERCEL || "",
     ...onVercel ? {
       GEMINI_SERVERLESS_COMPACT: extra.GEMINI_SERVERLESS_COMPACT ?? process.env.GEMINI_SERVERLESS_COMPACT ?? "0",
-      GEMINI_FETCH_TIMEOUT_MS: extra.GEMINI_FETCH_TIMEOUT_MS ?? process.env.GEMINI_FETCH_TIMEOUT_MS ?? "55000",
+      GEMINI_FETCH_TIMEOUT_MS: extra.GEMINI_FETCH_TIMEOUT_MS ?? process.env.GEMINI_FETCH_TIMEOUT_MS ?? "58000",
       GEMINI_PRO_ONLY: extra.GEMINI_PRO_ONLY ?? process.env.GEMINI_PRO_ONLY ?? "1"
     } : {}
   };

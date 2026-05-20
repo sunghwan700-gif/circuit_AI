@@ -16,7 +16,7 @@ export function deployEnv(extra = {}) {
           GEMINI_FETCH_TIMEOUT_MS:
             extra.GEMINI_FETCH_TIMEOUT_MS ??
             process.env.GEMINI_FETCH_TIMEOUT_MS ??
-            '55000',
+            '58000',
           GEMINI_PRO_ONLY:
             extra.GEMINI_PRO_ONLY ??
             process.env.GEMINI_PRO_ONLY ??

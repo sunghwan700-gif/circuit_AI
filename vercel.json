@@ -17,21 +17,23 @@
     }
   ],
   "functions": {
-    "api/**/*.js": {
-      "runtime": "nodejs",
-      "includeFiles": "server/**"
-    },
-    "api/openai/chat.js": {
-      "maxDuration": 60
-    },
-    "api/openai/chat/**/*.js": {
-      "maxDuration": 60
+    "api/ping.js": {
+      "runtime": "nodejs"
     },
     "api/submissions/**/*.js": {
-      "maxDuration": 30
+      "runtime": "nodejs",
+      "maxDuration": 30,
+      "includeFiles": "api/_bundled/**"
     },
     "api/auth/**/*.js": {
-      "maxDuration": 30
+      "runtime": "nodejs",
+      "maxDuration": 30,
+      "includeFiles": "api/_bundled/**"
+    },
+    "api/openai/**/*.js": {
+      "runtime": "nodejs",
+      "maxDuration": 60,
+      "includeFiles": "api/_bundled/**"
     }
   }
 }

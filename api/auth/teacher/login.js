@@ -1,10 +1,10 @@
-import { handleSubmissionsEvent } from '../../../server/submissions-handler.mjs'
+import { handleSubmissionsEvent } from '../../_bundled/submissions-handler.mjs'
 import {
   requestToEvent,
   lambdaResultToResponse,
   corsHeaders,
-} from '../../../server/vercel-http.mjs'
-import { withApiErrorGuard } from '../../../server/wrap-vercel-api.mjs'
+  withApiErrorGuard,
+} from '../../_bundled/http-utils.mjs'
 
 export const config = {
   maxDuration: 30,

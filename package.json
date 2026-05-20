@@ -6,12 +6,14 @@
   "scripts": {
     "dev": "vite",
     "dev:vercel": "vercel dev",
-    "build": "vite build",
+    "build": "node scripts/bundle-vercel-api.mjs && vite build",
+    "bundle:vercel-api": "node scripts/bundle-vercel-api.mjs",
     "preview": "vite preview",
     "sync-server": "node server/submissions-server.mjs",
     "vercel:env": "node scripts/push-vercel-env.mjs"
   },
   "devDependencies": {
+    "esbuild": "^0.27.0",
     "vite": "^8.0.1"
   },
   "dependencies": {

@@ -2,10 +2,11 @@
  * Vercel Serverless — Gemini 2.5 Pro NDJSON 스트리밍
  * POST /api/openai/chat
  */
-import { runGeminiChatWithHeartbeat } from '../../server/gemini-chat-core.mjs'
-import { deployEnv } from '../../server/deploy-env.mjs'
-import { corsHeaders } from '../../server/vercel-http.mjs'
-import { withApiErrorGuard } from '../../server/wrap-vercel-api.mjs'
+import {
+  runGeminiChatWithHeartbeat,
+  deployEnv,
+} from '../_bundled/gemini-api.mjs'
+import { corsHeaders, withApiErrorGuard } from '../_bundled/http-utils.mjs'
 
 /** Hobby 60s / Pro 300s — 플랜 초과 시 배포·실행 오류 방지 */
 export const config = {

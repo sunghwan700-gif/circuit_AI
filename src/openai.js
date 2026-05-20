@@ -57,7 +57,11 @@ function parseApiError(raw, status) {
     return 'AI 서버가 일시적으로 바쁩니다. 10~20초 뒤 같은 질문을 다시 보내 주세요.'
   }
 
-  if (/deployment|FUNCTION_INVOCATION|An error occurred with your deployment/i.test(text)) {
+  if (
+    /deployment|FUNCTION_INVOCATION|An error occurred with your deployment|Cannot find module/i.test(
+      text,
+    )
+  ) {
     return 'AI 서버가 응답하지 못했습니다. Vercel에 GEMINI_API_KEY가 설정됐는지 확인하고 재배포해 주세요.'
   }
 

@@ -175,7 +175,16 @@ async function postRemoteUpsert(record) {
       )
     }
     throw new Error(
-      `제출 서버 오류 (${r.status})${detail ? `: ${String(detail).slice(0, 120)}` : ''}`,
+      (() => {
+        const d = String(detail || '')
+        if (/FUNCTION_INVOCATION_FAILED|Cannot find module/i.test(d)) {
+          return '제출 서버 설정 오류입니다. Vercel Functions 로그를 확인하거나 잠시 후 다시 시도해 주세요.'
+        }
+        if (/KV is not configured|제출 저장소/i.test(d)) {
+          return d.slice(0, 200)
+        }
+        return `제출 서버 오류 (${r.status})${d ? `: ${d.slice(0, 120)}` : ''}`
+      })(),
     )
   }
   const out = await r.json()

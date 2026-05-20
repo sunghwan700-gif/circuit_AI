@@ -1,11 +1,17 @@
 import { handleSubmissionsEvent } from '../../server/submissions-handler.mjs'
-import { requestToEvent, lambdaResultToResponse, corsHeaders } from '../../server/vercel-http.mjs'
+import {
+  requestToEvent,
+  lambdaResultToResponse,
+  corsHeaders,
+} from '../../server/vercel-http.mjs'
+import { withApiErrorGuard } from '../../server/wrap-vercel-api.mjs'
 
 export const config = {
   maxDuration: 30,
+  runtime: 'nodejs',
 }
 
-export default async function handler(request, context) {
+async function handler(request, context) {
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders() })
   }
@@ -18,3 +24,5 @@ export default async function handler(request, context) {
   }
   return lambdaResultToResponse(await handleSubmissionsEvent(event))
 }
+
+export default withApiErrorGuard(handler)

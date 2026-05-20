@@ -8,7 +8,18 @@ import { fileURLToPath } from 'url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const LOCAL_KV_DIR = path.join(__dirname, 'data', 'kv')
 
+/** Vercel KV · Upstash(Redis) 환경 변수 호환 */
+function ensureKvEnvAliases() {
+  if (!process.env.KV_REST_API_URL && process.env.UPSTASH_REDIS_REST_URL) {
+    process.env.KV_REST_API_URL = process.env.UPSTASH_REDIS_REST_URL
+  }
+  if (!process.env.KV_REST_API_TOKEN && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    process.env.KV_REST_API_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN
+  }
+}
+
 function useVercelKv() {
+  ensureKvEnvAliases()
   return Boolean(
     process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN,
   )

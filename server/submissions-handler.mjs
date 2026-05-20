@@ -479,10 +479,12 @@ export async function handleSubmissionsEvent(event) {
     return text(503, 'Submission store unavailable.')
   }
 
-  if (process.env.VERCEL === '1' && !isRemoteKvConfigured()) {
+  const onVercel =
+    process.env.VERCEL === '1' || Boolean(process.env.VERCEL_URL)
+  if (onVercel && !isRemoteKvConfigured()) {
     return text(
       503,
-      'Vercel KV is not configured. Create a KV database in the Vercel project and link it (KV_REST_API_URL).',
+      '제출 저장소(Vercel KV)가 연결되어 있지 않습니다. Vercel 프로젝트 → Storage → KV를 생성·연결한 뒤 재배포하세요.',
     )
   }
 

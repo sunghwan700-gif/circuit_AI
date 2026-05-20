@@ -5,6 +5,7 @@
 import { runGeminiChatWithHeartbeat } from '../../server/gemini-chat-core.mjs'
 import { deployEnv } from '../../server/deploy-env.mjs'
 import { corsHeaders } from '../../server/vercel-http.mjs'
+import { withApiErrorGuard } from '../../server/wrap-vercel-api.mjs'
 
 /** Hobby 60s / Pro 300s — 플랜 초과 시 배포·실행 오류 방지 */
 export const config = {
@@ -23,7 +24,7 @@ function friendlyHandlerError(err) {
   return msg || 'AI 요청 처리 중 오류가 발생했습니다.'
 }
 
-export default async function handler(request) {
+async function handler(request) {
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders() })
   }
@@ -108,3 +109,5 @@ export default async function handler(request) {
     )
   }
 }
+
+export default withApiErrorGuard(handler)

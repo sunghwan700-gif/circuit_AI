@@ -4,7 +4,8 @@ import { deployEnv } from '../../../server/deploy-env.mjs'
 import { corsHeaders } from '../../../server/vercel-http.mjs'
 
 export const config = {
-  maxDuration: 300,
+  maxDuration: 60,
+  runtime: 'nodejs',
 }
 
 export default async function handler(request) {

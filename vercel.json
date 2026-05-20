@@ -17,9 +17,15 @@
     }
   ],
   "functions": {
-    "api/openai/chat.js": {
-      "maxDuration": 60,
+    "api/**/*.js": {
+      "runtime": "nodejs",
       "includeFiles": "server/**"
+    },
+    "api/openai/chat.js": {
+      "maxDuration": 60
+    },
+    "api/openai/chat/**/*.js": {
+      "maxDuration": 60
     },
     "api/submissions/**/*.js": {
       "maxDuration": 30

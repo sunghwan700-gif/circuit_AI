@@ -9,6 +9,7 @@ import { corsHeaders } from '../../server/vercel-http.mjs'
 /** Hobby 60s / Pro 300s — 플랜 초과 시 배포·실행 오류 방지 */
 export const config = {
   maxDuration: 60,
+  runtime: 'nodejs',
 }
 
 function friendlyHandlerError(err) {
@@ -67,6 +68,7 @@ export default async function handler(request) {
             /* client disconnected */
           }
         }
+        push({ event: 'status', message: '서버에 연결되었습니다…' })
         try {
           await runGeminiChatWithHeartbeat(body, env, push)
         } catch (e) {

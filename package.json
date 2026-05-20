@@ -9,7 +9,8 @@
     "dev:netlify": "cross-env VITE_SUBMISSIONS_SAME_ORIGIN=true npx -y netlify-cli@21.6.0 dev",
     "build": "vite build",
     "preview": "vite preview",
-    "sync-server": "node server/submissions-server.mjs"
+    "sync-server": "node server/submissions-server.mjs",
+    "vercel:env": "node scripts/push-vercel-env.mjs"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

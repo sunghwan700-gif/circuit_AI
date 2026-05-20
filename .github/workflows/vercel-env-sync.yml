@@ -1,0 +1,33 @@
+# 로컬 .env 대신 GitHub Secrets → Vercel Production 환경 변수 동기화
+# 1) Repo → Settings → Secrets and variables → Actions 에 추가:
+#    VERCEL_TOKEN, GEMINI_API_KEY, SUBMISSIONS_STUDENT_TOKEN,
+#    SUBMISSIONS_TEACHER_PASSWORD, VITE_SUBMISSIONS_STUDENT_TOKEN
+# 2) Actions → "Sync Vercel env" → Run workflow
+name: Sync Vercel env
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push env to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_CHAT_MODEL: ${{ secrets.GEMINI_CHAT_MODEL }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          GEMINI_FALLBACK_MODELS: ${{ secrets.GEMINI_FALLBACK_MODELS }}
+          SUBMISSIONS_STUDENT_TOKEN: ${{ secrets.SUBMISSIONS_STUDENT_TOKEN }}
+          SUBMISSIONS_TEACHER_PASSWORD: ${{ secrets.SUBMISSIONS_TEACHER_PASSWORD }}
+          VITE_SUBMISSIONS_STUDENT_TOKEN: ${{ secrets.VITE_SUBMISSIONS_STUDENT_TOKEN }}
+        run: node scripts/push-vercel-env.mjs
+
+      - name: Trigger Vercel redeploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: node scripts/trigger-vercel-deploy.mjs

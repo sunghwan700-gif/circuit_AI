@@ -29,7 +29,7 @@ export async function prepareGeminiChatRequest(body, env) {
       body: JSON.stringify({
         error: {
           message:
-            '서버에 GEMINI_API_KEY(또는 GOOGLE_API_KEY)가 설정되어 있지 않습니다. 로컬은 .env, Netlify는 Site settings → Environment variables에 추가한 뒤 다시 배포하세요.',
+            '서버에 GEMINI_API_KEY(또는 GOOGLE_API_KEY)가 설정되어 있지 않습니다. 로컬은 .env, Vercel·Netlify는 환경 변수에 추가한 뒤 재배포하세요.',
         },
       }),
     }

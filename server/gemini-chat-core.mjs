@@ -151,8 +151,12 @@ export async function prepareGeminiChatRequest(body, env) {
       ? 0
       : isBgJob && isChatJob
         ? 2
-        : isServerlessDeploy && isChatJob
-          ? 1
+        : isChatJob
+          ? isServerlessDeploy
+            ? 2
+            : useProPrimary
+              ? 3
+              : 2
           : useProPrimary
             ? syncProTight
               ? 0
@@ -242,7 +246,8 @@ ${
       ? `채팅 답변 규칙(필수 — 알짜배기):
 - 마지막 학생 질문에만 답합니다. 이전 답·질문과 무관한 회로 전체 설명은 쓰지 않습니다.
 - 분량: 보통 전체 150~350자(한국어). 최대 500자. 불릿 3~5개 이내. 문단 2~3개 이내.
-- 구조(이 순서만): ① 한 줄 핵심 결론 ② 확인된 근거 1~2개 (근거: …) ③ 지금 할 일 1~2가지. 안전 이슈 있으면 맨 위 1문장만.
+- 구조(이 순서만, **반드시 끝까지 완결**): ① 한 줄 핵심 결론 ② 확인된 근거 1~2개 (근거: …) ③ 지금 할 일 1~2가지. 안전 이슈 있으면 맨 위 1문장만.
+- 불릿·번호·괄호를 열었으면 반드시 끝까지 쓰고 마침표로 문장을 닫을 것. 중간에 끊기지 않게.
 - 장황한 서두·배경 설명·용어 사전·중복 문장 금지. 같은 뜻 반복 금지.
 - 「종합 분석」「전체 점검」「처음부터」를 명시한 경우에만 불릿 6~8개까지 허용.
 - 1)~5) 번호 형식은 학생이 종합 분석을 요청할 때만 사용.`
@@ -660,24 +665,11 @@ export async function runGeminiChatProxy(body, env) {
       }
     }
 
-    const looksTruncated = (text) => {
-      const t = String(text || '').trim()
-      if (!t || t.length < 120) return false
-      if (/1\)\s*결론\s*요약/i.test(t) && !/5\)\s*추가/i.test(t)) return true
-      if (
-        t.length > 280 &&
-        !/[.!?。…』」\)]\s*$/.test(t) &&
-        /[가-힣0-9a-zA-Z(,（]\s*$/.test(t)
-      ) {
-        return true
-      }
-      return false
-    }
-
-    const needsContinue = (reason, text) =>
-      /MAX_TOKENS/i.test(String(reason || '')) || looksTruncated(text)
-
-    for (let i = 0; i < maxContinues && needsContinue(finishReason, out); i++) {
+    for (
+      let i = 0;
+      i < maxContinues && needsContinueGeneration(finishReason, out, isChatJob);
+      i++
+    ) {
       contents.push({
         role: 'model',
         parts: [{ text: out.split('\n').slice(-40).join('\n') }],
@@ -704,7 +696,7 @@ export async function runGeminiChatProxy(body, env) {
       finishReason = next.finishReason || ''
     }
 
-    if (looksTruncated(out) && !isChatJob) {
+    if (looksTruncatedText(out, false) && !isChatJob) {
       out = `${out}\n\n(답변이 길어 여기서 끊겼을 수 있습니다. 채팅에 「이어서 작성해줘」라고 입력하면 나머지를 이어 받을 수 있습니다.)`
     }
 
@@ -793,6 +785,143 @@ ${out}`
   }
 }
 
+/** @param {string} text @param {boolean} [isChatJob] */
+function looksTruncatedText(text, isChatJob = false) {
+  const t = String(text || '').trim()
+  if (!t) return false
+
+  if (isChatJob) {
+    const endsMid =
+      /[가-힣0-9a-zA-Z(,（·]\s*$/.test(t) &&
+      !/[.!?。…』」\)]\s*$/.test(t)
+    if (endsMid && t.length >= 35) return true
+    if (
+      /확인된\s*근거|②|근거\s*[:：]/.test(t) &&
+      !/할\s*일|③|다음\s*할|지금\s*할|해야/i.test(t)
+    ) {
+      return true
+    }
+    return false
+  }
+
+  if (t.length < 120) return false
+  if (/1\)\s*결론\s*요약/i.test(t) && !/5\)\s*추가/i.test(t)) return true
+  if (
+    t.length > 280 &&
+    !/[.!?。…』」\)]\s*$/.test(t) &&
+    /[가-힣0-9a-zA-Z(,（]\s*$/.test(t)
+  ) {
+    return true
+  }
+  return false
+}
+
+/** @param {string} [finishReason] @param {string} text @param {boolean} [isChatJob] */
+function needsContinueGeneration(finishReason, text, isChatJob = false) {
+  return (
+    /MAX_TOKENS/i.test(String(finishReason || '')) ||
+    looksTruncatedText(text, isChatJob)
+  )
+}
+
+function stripInlineImagesFromContents(contentsArr) {
+  return contentsArr.map((turn) => ({
+    role: turn.role,
+    parts: (turn.parts || []).filter((p) => !p.inlineData),
+  }))
+}
+
+/** @param {object} prep @param {string} model @param {object[]} contents */
+async function geminiGenerateOnce(prep, model, contents) {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      model,
+    )}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': prep.key,
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          role: 'system',
+          parts: [{ text: prep.systemContent }],
+        },
+        contents,
+        generationConfig: {
+          temperature: prep.temperature,
+          topP: prep.topP,
+          maxOutputTokens: prep.maxOutputTokens,
+        },
+      }),
+      signal: AbortSignal.timeout(prep.geminiFetchTimeoutMs),
+    },
+  )
+  const raw = await res.text()
+  if (!res.ok) {
+    let msg = raw
+    try {
+      msg = JSON.parse(raw).error?.message || raw
+    } catch {
+      /* ignore */
+    }
+    return { ok: false, status: res.status, message: String(msg || '') }
+  }
+  let data
+  try {
+    data = JSON.parse(raw)
+  } catch {
+    return { ok: false, status: 502, message: 'invalid_json' }
+  }
+  const parts = data.candidates?.[0]?.content?.parts
+  const text = Array.isArray(parts)
+    ? parts
+        .filter((p) => p && p.thought !== true)
+        .map((p) => (typeof p?.text === 'string' ? p.text : ''))
+        .join('')
+        .trim()
+    : ''
+  const finishReason = String(data.candidates?.[0]?.finishReason || '').trim()
+  if (!text) return { ok: false, status: 502, message: 'empty_response' }
+  return { ok: true, text, finishReason }
+}
+
+/** @param {object} prep @param {string} model @param {string} text @param {(obj: object) => void} push */
+async function continueStreamedAnswer(prep, model, text, push) {
+  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 3)
+  let out = String(text || '').trim()
+  let finishReason = ''
+
+  for (let i = 0; i < maxRounds; i++) {
+    if (!needsContinueGeneration(finishReason, out, prep.isChatJob)) break
+    push({ event: 'status', message: '답변 마무리 중…' })
+    const contents = [
+      ...stripInlineImagesFromContents(prep.contents),
+      { role: 'model', parts: [{ text: out.slice(-2500) }] },
+      {
+        role: 'user',
+        parts: [
+          {
+            text: prep.isChatJob
+              ? '방금 답변을 끊기지 않게 이어서 써줘. ② 확인된 근거와 ③ 지금 할 일을 반드시 완결해줘. 이미 쓴 문장은 반복하지 마.'
+              : '방금 답변을 이어서 계속 작성해줘. 끊긴 지점부터 이어서. 끝까지 완결해줘.',
+          },
+        ],
+      },
+    ]
+    const hit = await geminiGenerateOnce(prep, model, contents)
+    if (!hit.ok || !hit.text) break
+    const chunk = String(hit.text).trim()
+    if (chunk) {
+      out = `${out}\n${chunk}`.trim()
+      push({ event: 'chunk', text: chunk })
+    }
+    finishReason = hit.finishReason || ''
+  }
+  return out
+}
+
 /** @param {unknown} obj */
 function extractStreamChunkText(obj) {
   const parts = obj?.candidates?.[0]?.content?.parts
@@ -808,6 +937,7 @@ async function consumeGeminiSseStream(body, onText) {
   const decoder = new TextDecoder()
   let buf = ''
   let full = ''
+  let finishReason = ''
 
   while (true) {
     const { done, value } = await reader.read()
@@ -821,7 +951,10 @@ async function consumeGeminiSseStream(body, onText) {
       let jsonStr = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed
       if (!jsonStr || jsonStr === '[' || jsonStr === ']') continue
       try {
-        const chunk = extractStreamChunkText(JSON.parse(jsonStr))
+        const data = JSON.parse(jsonStr)
+        const fr = String(data.candidates?.[0]?.finishReason || '').trim()
+        if (fr) finishReason = fr
+        const chunk = extractStreamChunkText(data)
         if (chunk) {
           full += chunk
           onText(chunk)
@@ -831,7 +964,25 @@ async function consumeGeminiSseStream(body, onText) {
       }
     }
   }
-  return full.trim()
+
+  const tail = buf.trim()
+  if (tail && tail !== 'data: [DONE]') {
+    try {
+      let jsonStr = tail.startsWith('data:') ? tail.slice(5).trim() : tail
+      const data = JSON.parse(jsonStr)
+      const fr = String(data.candidates?.[0]?.finishReason || '').trim()
+      if (fr) finishReason = fr
+      const chunk = extractStreamChunkText(data)
+      if (chunk) {
+        full += chunk
+        onText(chunk)
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return { text: full.trim(), finishReason }
 }
 
 /** @param {object} prep @param {string} model @param {(obj: object) => void} push */
@@ -873,11 +1024,19 @@ async function streamOneGeminiModel(prep, model, push) {
   }
   if (!res.body) return { ok: false, status: 502, message: 'empty_response' }
 
-  const full = await consumeGeminiSseStream(res.body, (chunk) => {
+  const streamed = await consumeGeminiSseStream(res.body, (chunk) => {
     push({ event: 'chunk', text: chunk })
   })
-  if (!full) return { ok: false, status: 502, message: 'empty_response' }
-  return { ok: true, text: full, model }
+  if (!streamed.text) return { ok: false, status: 502, message: 'empty_response' }
+
+  let text = streamed.text
+  if (needsContinueGeneration(streamed.finishReason, text, prep.isChatJob)) {
+    text = await continueStreamedAnswer(prep, model, text, push)
+  } else if (prep.isChatJob && looksTruncatedText(text, true)) {
+    text = await continueStreamedAnswer(prep, model, text, push)
+  }
+
+  return { ok: true, text, model }
 }
 
 /** @param {object} body @param {Record<string, string | undefined>} env @param {(obj: object) => void} push */

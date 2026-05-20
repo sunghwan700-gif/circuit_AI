@@ -179,7 +179,7 @@ async function sendOpenAiChatStreaming(
     throw new Error('이미지·대화가 너무 큽니다. 사진 수를 줄여 주세요.')
   }
 
-  const timeoutMs = isProductionDeploy() ? 65_000 : 180_000
+  const timeoutMs = isProductionDeploy() ? 90_000 : 180_000
 
   options?.onStatus?.('Pro 분석 연결 중…')
 
@@ -208,6 +208,9 @@ async function sendOpenAiChatStreaming(
   const text = await consumeNdjsonStream(res.body, {
     onStatus: (msg) => options?.onStatus?.(msg),
     onChunk: (_chunk, accumulated) => {
+      if (accumulated.length > 0) {
+        options?.onPartial?.(accumulated)
+      }
       if (accumulated.length > 0 && accumulated.length % 80 < 20) {
         options?.onStatus?.('Pro 분석 중…')
       }

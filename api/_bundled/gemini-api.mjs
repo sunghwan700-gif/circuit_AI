@@ -85,7 +85,7 @@ async function prepareGeminiChatRequest(body, env) {
   const defaultMaxTokens = useProPrimary ? syncProTight ? isChatJob ? 2048 : 2560 : isChatJob ? 2048 : 4096 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
   const modelCandidatesRun = serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
-  const maxContinues = syncProTight && isChatJob ? 0 : isBgJob && isChatJob ? 2 : isServerlessDeploy && isChatJob ? 1 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
+  const maxContinues = syncProTight && isChatJob ? 0 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 2 : useProPrimary ? 3 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
   const retryDelaysMs = isBgJob ? [700, 1500, 3e3, 5e3, 8e3] : syncProTight ? [300, 700, 1200] : serverlessCompact ? [400, 900, 1800] : [250, 750, 1500, 3e3];
   const fetchTimeoutParsed = Number(String(env.GEMINI_FETCH_TIMEOUT_MS || "").trim());
   const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? syncProTight ? 23e3 : 24e3 : 12e4;
@@ -138,7 +138,8 @@ async function prepareGeminiChatRequest(body, env) {
 ${isChatJob ? `\uCC44\uD305 \uB2F5\uBCC0 \uADDC\uCE59(\uD544\uC218 \u2014 \uC54C\uC9DC\uBC30\uAE30):
 - \uB9C8\uC9C0\uB9C9 \uD559\uC0DD \uC9C8\uBB38\uC5D0\uB9CC \uB2F5\uD569\uB2C8\uB2E4. \uC774\uC804 \uB2F5\xB7\uC9C8\uBB38\uACFC \uBB34\uAD00\uD55C \uD68C\uB85C \uC804\uCCB4 \uC124\uBA85\uC740 \uC4F0\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.
 - \uBD84\uB7C9: \uBCF4\uD1B5 \uC804\uCCB4 150~350\uC790(\uD55C\uAD6D\uC5B4). \uCD5C\uB300 500\uC790. \uBD88\uB9BF 3~5\uAC1C \uC774\uB0B4. \uBB38\uB2E8 2~3\uAC1C \uC774\uB0B4.
-- \uAD6C\uC870(\uC774 \uC21C\uC11C\uB9CC): \u2460 \uD55C \uC904 \uD575\uC2EC \uACB0\uB860 \u2461 \uD655\uC778\uB41C \uADFC\uAC70 1~2\uAC1C (\uADFC\uAC70: \u2026) \u2462 \uC9C0\uAE08 \uD560 \uC77C 1~2\uAC00\uC9C0. \uC548\uC804 \uC774\uC288 \uC788\uC73C\uBA74 \uB9E8 \uC704 1\uBB38\uC7A5\uB9CC.
+- \uAD6C\uC870(\uC774 \uC21C\uC11C\uB9CC, **\uBC18\uB4DC\uC2DC \uB05D\uAE4C\uC9C0 \uC644\uACB0**): \u2460 \uD55C \uC904 \uD575\uC2EC \uACB0\uB860 \u2461 \uD655\uC778\uB41C \uADFC\uAC70 1~2\uAC1C (\uADFC\uAC70: \u2026) \u2462 \uC9C0\uAE08 \uD560 \uC77C 1~2\uAC00\uC9C0. \uC548\uC804 \uC774\uC288 \uC788\uC73C\uBA74 \uB9E8 \uC704 1\uBB38\uC7A5\uB9CC.
+- \uBD88\uB9BF\xB7\uBC88\uD638\xB7\uAD04\uD638\uB97C \uC5F4\uC5C8\uC73C\uBA74 \uBC18\uB4DC\uC2DC \uB05D\uAE4C\uC9C0 \uC4F0\uACE0 \uB9C8\uCE68\uD45C\uB85C \uBB38\uC7A5\uC744 \uB2EB\uC744 \uAC83. \uC911\uAC04\uC5D0 \uB04A\uAE30\uC9C0 \uC54A\uAC8C.
 - \uC7A5\uD669\uD55C \uC11C\uB450\xB7\uBC30\uACBD \uC124\uBA85\xB7\uC6A9\uC5B4 \uC0AC\uC804\xB7\uC911\uBCF5 \uBB38\uC7A5 \uAE08\uC9C0. \uAC19\uC740 \uB73B \uBC18\uBCF5 \uAE08\uC9C0.
 - \u300C\uC885\uD569 \uBD84\uC11D\u300D\u300C\uC804\uCCB4 \uC810\uAC80\u300D\u300C\uCC98\uC74C\uBD80\uD130\u300D\uB97C \uBA85\uC2DC\uD55C \uACBD\uC6B0\uC5D0\uB9CC \uBD88\uB9BF 6~8\uAC1C\uAE4C\uC9C0 \uD5C8\uC6A9.
 - 1)~5) \uBC88\uD638 \uD615\uC2DD\uC740 \uD559\uC0DD\uC774 \uC885\uD569 \uBD84\uC11D\uC744 \uC694\uCCAD\uD560 \uB54C\uB9CC \uC0AC\uC6A9.` : ""}
@@ -291,7 +292,7 @@ async function runGeminiChatProxy(body, env) {
     let usedModel = "";
     let out = "";
     let finishReason = "";
-    const stripInlineImagesFromContents = (contentsArr) => contentsArr.map((turn) => ({
+    const stripInlineImagesFromContents2 = (contentsArr) => contentsArr.map((turn) => ({
       role: turn.role,
       parts: (turn.parts || []).filter((p) => !p.inlineData)
     }));
@@ -421,7 +422,7 @@ async function runGeminiChatProxy(body, env) {
       }
     }
     if (!out.trim() && imageList.length && isChatJob) {
-      const textContents = stripInlineImagesFromContents(contents);
+      const textContents = stripInlineImagesFromContents2(contents);
       const lastIdx = textContents.length - 1;
       if (lastIdx >= 0 && textContents[lastIdx]?.role === "user") {
         textContents[lastIdx].parts = [
@@ -481,17 +482,7 @@ async function runGeminiChatProxy(body, env) {
         })
       };
     }
-    const looksTruncated = (text) => {
-      const t = String(text || "").trim();
-      if (!t || t.length < 120) return false;
-      if (/1\)\s*결론\s*요약/i.test(t) && !/5\)\s*추가/i.test(t)) return true;
-      if (t.length > 280 && !/[.!?。…』」\)]\s*$/.test(t) && /[가-힣0-9a-zA-Z(,（]\s*$/.test(t)) {
-        return true;
-      }
-      return false;
-    };
-    const needsContinue = (reason, text) => /MAX_TOKENS/i.test(String(reason || "")) || looksTruncated(text);
-    for (let i = 0; i < maxContinues && needsContinue(finishReason, out); i++) {
+    for (let i = 0; i < maxContinues && needsContinueGeneration(finishReason, out, isChatJob); i++) {
       contents.push({
         role: "model",
         parts: [{ text: out.split("\n").slice(-40).join("\n") }]
@@ -506,7 +497,7 @@ async function runGeminiChatProxy(body, env) {
       });
       const r2 = await callGemini(
         usedModel || modelCandidatesRun[0],
-        stripInlineImagesFromContents(contents)
+        stripInlineImagesFromContents2(contents)
       );
       const raw2 = await r2.text();
       if (!r2.ok) break;
@@ -516,7 +507,7 @@ async function runGeminiChatProxy(body, env) {
 ${chunk}`.trim();
       finishReason = next.finishReason || "";
     }
-    if (looksTruncated(out) && !isChatJob) {
+    if (looksTruncatedText(out, false) && !isChatJob) {
       out = `${out}
 
 (\uB2F5\uBCC0\uC774 \uAE38\uC5B4 \uC5EC\uAE30\uC11C \uB04A\uACBC\uC744 \uC218 \uC788\uC2B5\uB2C8\uB2E4. \uCC44\uD305\uC5D0 \u300C\uC774\uC5B4\uC11C \uC791\uC131\uD574\uC918\u300D\uB77C\uACE0 \uC785\uB825\uD558\uBA74 \uB098\uBA38\uC9C0\uB97C \uC774\uC5B4 \uBC1B\uC744 \uC218 \uC788\uC2B5\uB2C8\uB2E4.)`;
@@ -587,6 +578,111 @@ ${out}`;
     };
   }
 }
+function looksTruncatedText(text, isChatJob = false) {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  if (isChatJob) {
+    const endsMid = /[가-힣0-9a-zA-Z(,（·]\s*$/.test(t) && !/[.!?。…』」\)]\s*$/.test(t);
+    if (endsMid && t.length >= 35) return true;
+    if (/확인된\s*근거|②|근거\s*[:：]/.test(t) && !/할\s*일|③|다음\s*할|지금\s*할|해야/i.test(t)) {
+      return true;
+    }
+    return false;
+  }
+  if (t.length < 120) return false;
+  if (/1\)\s*결론\s*요약/i.test(t) && !/5\)\s*추가/i.test(t)) return true;
+  if (t.length > 280 && !/[.!?。…』」\)]\s*$/.test(t) && /[가-힣0-9a-zA-Z(,（]\s*$/.test(t)) {
+    return true;
+  }
+  return false;
+}
+function needsContinueGeneration(finishReason, text, isChatJob = false) {
+  return /MAX_TOKENS/i.test(String(finishReason || "")) || looksTruncatedText(text, isChatJob);
+}
+function stripInlineImagesFromContents(contentsArr) {
+  return contentsArr.map((turn) => ({
+    role: turn.role,
+    parts: (turn.parts || []).filter((p) => !p.inlineData)
+  }));
+}
+async function geminiGenerateOnce(prep, model, contents) {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      model
+    )}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": prep.key
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          role: "system",
+          parts: [{ text: prep.systemContent }]
+        },
+        contents,
+        generationConfig: {
+          temperature: prep.temperature,
+          topP: prep.topP,
+          maxOutputTokens: prep.maxOutputTokens
+        }
+      }),
+      signal: AbortSignal.timeout(prep.geminiFetchTimeoutMs)
+    }
+  );
+  const raw = await res.text();
+  if (!res.ok) {
+    let msg = raw;
+    try {
+      msg = JSON.parse(raw).error?.message || raw;
+    } catch {
+    }
+    return { ok: false, status: res.status, message: String(msg || "") };
+  }
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return { ok: false, status: 502, message: "invalid_json" };
+  }
+  const parts = data.candidates?.[0]?.content?.parts;
+  const text = Array.isArray(parts) ? parts.filter((p) => p && p.thought !== true).map((p) => typeof p?.text === "string" ? p.text : "").join("").trim() : "";
+  const finishReason = String(data.candidates?.[0]?.finishReason || "").trim();
+  if (!text) return { ok: false, status: 502, message: "empty_response" };
+  return { ok: true, text, finishReason };
+}
+async function continueStreamedAnswer(prep, model, text, push) {
+  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 3);
+  let out = String(text || "").trim();
+  let finishReason = "";
+  for (let i = 0; i < maxRounds; i++) {
+    if (!needsContinueGeneration(finishReason, out, prep.isChatJob)) break;
+    push({ event: "status", message: "\uB2F5\uBCC0 \uB9C8\uBB34\uB9AC \uC911\u2026" });
+    const contents = [
+      ...stripInlineImagesFromContents(prep.contents),
+      { role: "model", parts: [{ text: out.slice(-2500) }] },
+      {
+        role: "user",
+        parts: [
+          {
+            text: prep.isChatJob ? "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uB04A\uAE30\uC9C0 \uC54A\uAC8C \uC774\uC5B4\uC11C \uC368\uC918. \u2461 \uD655\uC778\uB41C \uADFC\uAC70\uC640 \u2462 \uC9C0\uAE08 \uD560 \uC77C\uC744 \uBC18\uB4DC\uC2DC \uC644\uACB0\uD574\uC918. \uC774\uBBF8 \uC4F4 \uBB38\uC7A5\uC740 \uBC18\uBCF5\uD558\uC9C0 \uB9C8." : "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uACC4\uC18D \uC791\uC131\uD574\uC918. \uB04A\uAE34 \uC9C0\uC810\uBD80\uD130 \uC774\uC5B4\uC11C. \uB05D\uAE4C\uC9C0 \uC644\uACB0\uD574\uC918."
+          }
+        ]
+      }
+    ];
+    const hit = await geminiGenerateOnce(prep, model, contents);
+    if (!hit.ok || !hit.text) break;
+    const chunk = String(hit.text).trim();
+    if (chunk) {
+      out = `${out}
+${chunk}`.trim();
+      push({ event: "chunk", text: chunk });
+    }
+    finishReason = hit.finishReason || "";
+  }
+  return out;
+}
 function extractStreamChunkText(obj) {
   const parts = obj?.candidates?.[0]?.content?.parts;
   if (!Array.isArray(parts)) return "";
@@ -597,6 +693,7 @@ async function consumeGeminiSseStream(body, onText) {
   const decoder = new TextDecoder();
   let buf = "";
   let full = "";
+  let finishReason = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -609,7 +706,10 @@ async function consumeGeminiSseStream(body, onText) {
       let jsonStr = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
       if (!jsonStr || jsonStr === "[" || jsonStr === "]") continue;
       try {
-        const chunk = extractStreamChunkText(JSON.parse(jsonStr));
+        const data = JSON.parse(jsonStr);
+        const fr = String(data.candidates?.[0]?.finishReason || "").trim();
+        if (fr) finishReason = fr;
+        const chunk = extractStreamChunkText(data);
         if (chunk) {
           full += chunk;
           onText(chunk);
@@ -618,7 +718,22 @@ async function consumeGeminiSseStream(body, onText) {
       }
     }
   }
-  return full.trim();
+  const tail = buf.trim();
+  if (tail && tail !== "data: [DONE]") {
+    try {
+      let jsonStr = tail.startsWith("data:") ? tail.slice(5).trim() : tail;
+      const data = JSON.parse(jsonStr);
+      const fr = String(data.candidates?.[0]?.finishReason || "").trim();
+      if (fr) finishReason = fr;
+      const chunk = extractStreamChunkText(data);
+      if (chunk) {
+        full += chunk;
+        onText(chunk);
+      }
+    } catch {
+    }
+  }
+  return { text: full.trim(), finishReason };
 }
 async function streamOneGeminiModel(prep, model, push) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
@@ -654,11 +769,17 @@ async function streamOneGeminiModel(prep, model, push) {
     return { ok: false, status: res.status, message: String(msg || "") };
   }
   if (!res.body) return { ok: false, status: 502, message: "empty_response" };
-  const full = await consumeGeminiSseStream(res.body, (chunk) => {
+  const streamed = await consumeGeminiSseStream(res.body, (chunk) => {
     push({ event: "chunk", text: chunk });
   });
-  if (!full) return { ok: false, status: 502, message: "empty_response" };
-  return { ok: true, text: full, model };
+  if (!streamed.text) return { ok: false, status: 502, message: "empty_response" };
+  let text = streamed.text;
+  if (needsContinueGeneration(streamed.finishReason, text, prep.isChatJob)) {
+    text = await continueStreamedAnswer(prep, model, text, push);
+  } else if (prep.isChatJob && looksTruncatedText(text, true)) {
+    text = await continueStreamedAnswer(prep, model, text, push);
+  }
+  return { ok: true, text, model };
 }
 async function runGeminiChatBufferedFallback(body, env, push) {
   push({ event: "status", message: "Pro \uBAA8\uB378\uB85C \uBD84\uC11D \uC911\u2026" });

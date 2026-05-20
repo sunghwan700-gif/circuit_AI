@@ -53,6 +53,10 @@ function loadEnvValues() {
   const parsed = existsSync(ENV_FILE)
     ? parseDotEnv(readFileSync(ENV_FILE, 'utf8'))
     : {}
+  const vercelKv = resolve(ROOT, '.env.vercel.kv')
+  if (existsSync(vercelKv)) {
+    Object.assign(parsed, parseDotEnv(readFileSync(vercelKv, 'utf8')))
+  }
   for (const key of KEYS) {
     const fromProcess = String(process.env[key] || '').trim()
     if (fromProcess) parsed[key] = fromProcess

@@ -6,28 +6,52 @@
  *   npm run vercel:kv
  */
 import { spawnSync } from 'child_process'
-import { mkdirSync, writeFileSync } from 'fs'
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import { homedir } from 'os'
 import { findCircuitProject, getToken, vercelApi } from './vercel-api.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const STORE_NAME = process.env.VERCEL_KV_NAME || 'circuit-submissions-kv'
+const VERCEL_CLI = 'vercel@latest'
 
-function runVercelCli(args) {
+function loadTokenFromAuthFile() {
+  if (process.env.VERCEL_TOKEN) return
+  const paths = [
+    resolve(ROOT, '.vercel', 'auth.json'),
+    resolve(homedir(), '.vercel', 'auth.json'),
+  ]
+  for (const p of paths) {
+    if (!existsSync(p)) continue
+    try {
+      const j = JSON.parse(readFileSync(p, 'utf8'))
+      const t = j.token || j.credentials?.[0]?.token
+      if (t) {
+        process.env.VERCEL_TOKEN = String(t).trim()
+        return
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function runVercelCli(args, { inherit = true } = {}) {
   const token = getToken()
-  const r = spawnSync(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['-y', 'vercel@41', ...args, '-t', token],
-    {
-      cwd: ROOT,
-      encoding: 'utf8',
-      stdio: 'inherit',
-      shell: process.platform === 'win32',
-      env: { ...process.env, VERCEL_TOKEN: token },
-    },
-  )
-  return r.status ?? 1
+  const bin = process.platform === 'win32' ? 'npx.cmd' : 'npx'
+  const r = spawnSync(bin, ['-y', VERCEL_CLI, ...args, '-t', token], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    stdio: inherit ? 'inherit' : 'pipe',
+    shell: process.platform === 'win32',
+    env: { ...process.env, VERCEL_TOKEN: token },
+  })
+  return {
+    status: r.status ?? 1,
+    stdout: r.stdout || '',
+    stderr: r.stderr || '',
+  }
 }
 
 /** @param {string} projectId @param {string} teamId */
@@ -37,8 +61,7 @@ async function listStores(projectId, teamId) {
   try {
     const data = await vercelApi(`/v1/storage/stores?${q}`, 'GET')
     return data?.stores || []
-  } catch (e) {
-    console.warn('storage 목록 조회 실패:', e instanceof Error ? e.message : e)
+  } catch {
     return []
   }
 }
@@ -49,86 +72,6 @@ function hasKvStore(stores) {
     const t = String(s.type || s.provider || s.name || '').toLowerCase()
     return /redis|kv|upstash/.test(t)
   })
-}
-
-/** @param {string} projectId @param {string} teamId */
-async function tryCreateRedisApi(projectId, teamId) {
-  const regions = ['icn1', 'sin1', 'hnd1', 'iad1']
-  for (const region of regions) {
-    try {
-      const q = teamId ? `?teamId=${encodeURIComponent(teamId)}` : ''
-      const data = await vercelApi(`/v1/storage/stores/redis${q}`, 'POST', {
-        name: STORE_NAME,
-        eviction: true,
-        primaryRegion: region,
-        readRegions: [],
-      })
-      const store = data?.store || data
-      if (store?.id) {
-        console.log(`Redis 생성됨 (${region}):`, store.id)
-        return store
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (!/region|invalid|not supported/i.test(msg)) {
-        console.warn(`redis 생성 ${region} 실패:`, msg.slice(0, 200))
-      }
-    }
-  }
-  return null
-}
-
-/** @param {string} storeId @param {string} projectId @param {string} teamId */
-async function tryConnectStore(storeId, projectId, teamId) {
-  const attempts = [
-    () => {
-      const q = teamId ? `?teamId=${encodeURIComponent(teamId)}` : ''
-      return vercelApi(
-        `/v1/storage/stores/${storeId}/connect${q}`,
-        'POST',
-        { projectId },
-      )
-    },
-    () => {
-      const q = teamId ? `?teamId=${encodeURIComponent(teamId)}` : ''
-      return vercelApi(
-        `/v1/storage/stores/${storeId}/links${q}`,
-        'POST',
-        { projectId },
-      )
-    },
-  ]
-  for (const fn of attempts) {
-    try {
-      await fn()
-      return true
-    } catch {
-      /* try next */
-    }
-  }
-  return false
-}
-
-async function tryCliInstall(projectName, teamId) {
-  const scope = teamId ? ['-S', teamId] : []
-  const linkArgs = ['link', '-p', projectName, '-y', ...scope]
-  console.log('\n프로젝트 연결:', linkArgs.join(' '))
-  runVercelCli(linkArgs)
-
-  const products = [
-    ['install', 'upstash-kv', '--name', STORE_NAME, '-y'],
-    ['install', 'upstash/redis', '--name', STORE_NAME, '-y'],
-    ['integration', 'add', 'upstash-kv', '--name', STORE_NAME, '-y'],
-    ['integration', 'add', 'upstash/redis', '--name', STORE_NAME, '-y'],
-    ['install', 'upstash', '--name', STORE_NAME, '-y'],
-  ]
-
-  for (const args of products) {
-    console.log('\n시도:', args.join(' '))
-    const code = runVercelCli([...args, ...scope])
-    if (code === 0) return true
-  }
-  return false
 }
 
 /** @param {string} projectId */
@@ -142,12 +85,59 @@ async function envHasKv(projectId) {
   )
 }
 
+/** @param {string} projectName @param {string} teamId */
+async function installUpstashKv(projectName, teamId) {
+  const scope = teamId ? ['-S', teamId] : []
+  const regions = ['hnd1', 'sin1', 'icn1', 'iad1']
+
+  runVercelCli(['link', '-p', projectName, '-y', ...scope])
+
+  for (const region of regions) {
+    console.log(`\n▶ Upstash KV 설치 (region=${region})…`)
+    const r = runVercelCli(
+      [
+        'integration',
+        'add',
+        'upstash/upstash-kv',
+        '-n',
+        STORE_NAME,
+        '-m',
+        `primaryRegion=${region}`,
+        '--non-interactive',
+        ...scope,
+      ],
+      { inherit: true },
+    )
+    if (r.status === 0) return true
+  }
+
+  console.log('\n▶ integration add upstash (자동 선택)…')
+  const fallback = runVercelCli(
+    ['integration', 'add', 'upstash', '--non-interactive', ...scope],
+    { inherit: true },
+  )
+  return fallback.status === 0
+}
+
+async function pullEnvToProject() {
+  console.log('\n▶ 환경 변수 동기화 (env pull)…')
+  const r = runVercelCli(
+    ['env', 'pull', '.env.vercel.kv', '--yes', '--environment', 'production'],
+    { inherit: false },
+  )
+  if (r.status !== 0) return false
+  const outPath = resolve(ROOT, '.env.vercel.kv')
+  if (!existsSync(outPath)) return false
+  return true
+}
+
 async function main() {
-  const { project, projectId, teamId, projectName } = await findCircuitProject(
-    process.env.VERCEL_PROJECT_NAME || 'circuit',
+  loadTokenFromAuthFile()
+  const { projectId, teamId, projectName } = await findCircuitProject(
+    process.env.VERCEL_PROJECT_NAME || 'aicircuit',
   )
   console.log(`대상 프로젝트: ${projectName} (${projectId})`)
-  if (teamId) console.log(`Team/Account: ${teamId}`)
+  if (teamId) console.log(`Team: ${teamId}`)
 
   mkdirSync(resolve(ROOT, '.vercel'), { recursive: true })
   writeFileSync(
@@ -155,49 +145,47 @@ async function main() {
     JSON.stringify({ projectId, orgId: teamId || projectId }),
   )
 
-  let stores = await listStores(projectId, teamId)
-  if (hasKvStore(stores)) {
-    console.log('이미 Redis/KV 스토어가 연결되어 있습니다.')
+  let hasKv = await envHasKv(projectId)
+  const stores = await listStores(projectId, teamId)
+
+  if (!hasKv && !hasKvStore(stores)) {
+    const ok = await installUpstashKv(projectName, teamId)
+    if (!ok) {
+      console.warn('\nCLI 설치가 완료되지 않았습니다.')
+    }
+    await pullEnvToProject()
+    hasKv = await envHasKv(projectId)
   } else {
-    let created = await tryCreateRedisApi(projectId, teamId)
-    if (created?.id) {
-      await tryConnectStore(created.id, projectId, teamId)
-    }
-    stores = await listStores(projectId, teamId)
-    if (!hasKvStore(stores)) {
-      console.log('\nAPI로 생성되지 않아 CLI 설치를 시도합니다…')
-      await tryCliInstall(projectName, teamId)
-      stores = await listStores(projectId, teamId)
-    }
+    console.log('KV/Redis 스토어 또는 환경 변수가 이미 있습니다.')
   }
 
-  const hasEnv = await envHasKv(projectId)
-  if (!hasEnv) {
+  if (!hasKv) {
+    console.warn('\n⚠ KV_REST_API_URL 이 아직 없습니다.')
+    console.warn('다음 중 하나를 시도하세요:')
+    console.warn('  1) Vercel → aicircuit → Storage → Upstash Redis → Connect')
     console.warn(
-      '\n경고: 프로젝트 환경 변수에 KV_REST_API_URL 이 아직 없습니다.',
-    )
-    console.warn(
-      'Vercel 대시보드 → Storage → 생성한 DB → Connect to Project → aicircuit 선택',
-    )
-    console.warn(
-      '또는 Upstash 콘솔에서 REST URL/TOKEN 을 .env 에 넣고 npm run vercel:env 실행',
+      '  2) https://console.upstash.com 에서 DB 생성 후 .env 에 URL/TOKEN → npm run vercel:env',
     )
   } else {
-    console.log('\n환경 변수 KV_* 확인됨.')
+    console.log('\n✓ KV 환경 변수 확인됨')
   }
 
-  console.log('\n재배포 중…')
-  const dep = spawnSync('node', ['scripts/trigger-vercel-deploy.mjs'], {
+  console.log('\n▶ .env → Vercel 환경 변수 업로드…')
+  spawnSync('node', ['scripts/push-vercel-env.mjs'], {
     cwd: ROOT,
     stdio: 'inherit',
     env: process.env,
   })
-  if ((dep.status ?? 1) !== 0) {
-    console.log('재배포 스크립트 실패 — Vercel 대시보드에서 Redeploy 해 주세요.')
-  }
 
-  console.log('\n완료 후 확인: https://aicircuit.vercel.app/api/ping')
-  console.log('  "kv": true 이면 제출·대시보드가 동작합니다.')
+  console.log('\n▶ 재배포…')
+  spawnSync('node', ['scripts/trigger-vercel-deploy.mjs'], {
+    cwd: ROOT,
+    stdio: 'inherit',
+    env: process.env,
+  })
+
+  console.log('\n확인: https://aicircuit.vercel.app/api/ping')
+  console.log('  "kv": true 이면 제출·교사 대시보드가 동작합니다.')
 }
 
 main().catch((e) => {

@@ -790,13 +790,195 @@ ${out}`
   }
 }
 
+/** @param {unknown} obj */
+function extractStreamChunkText(obj) {
+  const parts = obj?.candidates?.[0]?.content?.parts
+  if (!Array.isArray(parts)) return ''
+  return parts
+    .filter((p) => p && p.thought !== true)
+    .map((p) => (typeof p?.text === 'string' ? p.text : ''))
+    .join('')
+}
+
+async function consumeGeminiSseStream(body, onText) {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let full = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const lines = buf.split(/\r?\n/)
+    buf = lines.pop() || ''
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed === 'data: [DONE]') continue
+      let jsonStr = trimmed.startsWith('data:') ? trimmed.slice(5).trim() : trimmed
+      if (!jsonStr || jsonStr === '[' || jsonStr === ']') continue
+      try {
+        const chunk = extractStreamChunkText(JSON.parse(jsonStr))
+        if (chunk) {
+          full += chunk
+          onText(chunk)
+        }
+      } catch {
+        /* ignore partial */
+      }
+    }
+  }
+  return full.trim()
+}
+
+/** @param {object} prep @param {string} model @param {(obj: object) => void} push */
+async function streamOneGeminiModel(prep, model, push) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    model,
+  )}:streamGenerateContent?alt=sse`
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': prep.key,
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        role: 'system',
+        parts: [{ text: prep.systemContent }],
+      },
+      contents: prep.contents,
+      generationConfig: {
+        temperature: prep.temperature,
+        topP: prep.topP,
+        maxOutputTokens: prep.maxOutputTokens,
+      },
+    }),
+    signal: AbortSignal.timeout(prep.geminiFetchTimeoutMs),
+  })
+
+  if (!res.ok) {
+    const raw = await res.text()
+    let msg = raw
+    try {
+      msg = JSON.parse(raw).error?.message || raw
+    } catch {
+      /* ignore */
+    }
+    return { ok: false, status: res.status, message: String(msg || '') }
+  }
+  if (!res.body) return { ok: false, status: 502, message: 'empty_response' }
+
+  const full = await consumeGeminiSseStream(res.body, (chunk) => {
+    push({ event: 'chunk', text: chunk })
+  })
+  if (!full) return { ok: false, status: 502, message: 'empty_response' }
+  return { ok: true, text: full, model }
+}
+
+/** @param {object} body @param {Record<string, string | undefined>} env @param {(obj: object) => void} push */
+async function runGeminiChatBufferedFallback(body, env, push) {
+  push({ event: 'status', message: 'Pro 모델로 분석 중…' })
+  const pingMs = 900
+  const pingTimer = setInterval(() => push({ event: 'ping' }), pingMs)
+  try {
+    const result = await runGeminiChatProxy({ ...body, stream: false }, env)
+    clearInterval(pingTimer)
+    if (!result.ok || result.statusCode !== 200) {
+      let msg = '요청에 실패했습니다.'
+      try {
+        msg = JSON.parse(result.body).error?.message || msg
+      } catch {
+        /* ignore */
+      }
+      push({ event: 'error', message: msg })
+      return
+    }
+    let text = ''
+    let model = ''
+    try {
+      const j = JSON.parse(result.body)
+      text = j.choices?.[0]?.message?.content || ''
+      model = j.meta?.model || ''
+    } catch {
+      /* ignore */
+    }
+    if (!String(text).trim()) {
+      push({ event: 'error', message: 'AI가 빈 답변을 반환했습니다.' })
+      return
+    }
+    push({ event: 'done', text: String(text).trim(), model: model || undefined })
+  } catch (e) {
+    clearInterval(pingTimer)
+    push({
+      event: 'error',
+      message: e instanceof Error ? e.message : String(e),
+    })
+  }
+}
+
+/** @param {object} body @param {Record<string, string | undefined>} env @param {(obj: object) => void} push */
+export async function runGeminiChatStreamToPush(body, env, push) {
+  const prep = await prepareGeminiChatRequest(body, env)
+  if (!prep.ok) {
+    let msg = '요청에 실패했습니다.'
+    try {
+      msg = JSON.parse(prep.body).error?.message || msg
+    } catch {
+      /* ignore */
+    }
+    push({ event: 'error', message: msg })
+    return
+  }
+
+  const proMode = prep.modelCandidatesRun.some((m) => /pro/i.test(m))
+  push({
+    event: 'status',
+    message: proMode ? 'Pro 모델로 분석 중…' : '회로·사진을 분석하는 중입니다…',
+  })
+
+  const pingTimer = setInterval(() => push({ event: 'ping' }), proMode ? 800 : 2000)
+  let lastMsg = 'AI가 답변을 만들지 못했습니다.'
+
+  try {
+    for (const model of prep.modelCandidatesRun) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+          push({ event: 'status', message: `다시 시도 중… (${attempt + 1}/2)` })
+          await new Promise((r) => setTimeout(r, 2000))
+        }
+        try {
+          const hit = await streamOneGeminiModel(prep, model, push)
+          if (hit.ok && hit.text) {
+            clearInterval(pingTimer)
+            push({ event: 'done', text: hit.text, model: hit.model || model })
+            return
+          }
+          lastMsg = hit.message || lastMsg
+          const retryable =
+            hit.status === 429 ||
+            hit.status === 503 ||
+            hit.status === 502 ||
+            /overloaded|unavailable|empty_response/i.test(lastMsg)
+          if (!retryable) break
+        } catch (e) {
+          lastMsg = e instanceof Error ? e.message : String(e)
+          if (!/timeout|abort|503|429|overloaded/i.test(lastMsg)) break
+        }
+      }
+    }
+    clearInterval(pingTimer)
+    await runGeminiChatBufferedFallback(body, env, push)
+  } catch {
+    clearInterval(pingTimer)
+    await runGeminiChatBufferedFallback(body, env, push)
+  }
+}
+
 /**
- * NDJSON 스트리밍 (Gemini streamGenerateContent + ping)
- * @param {object} body
- * @param {Record<string, string | undefined>} env
- * @param {(obj: object) => void} push
+ * NDJSON 스트리밍 (Gemini SSE + ping, 실패 시 버퍼 폴백)
  */
 export async function runGeminiChatWithHeartbeat(body, env, push) {
-  const { runGeminiChatStreamToPush } = await import('./gemini-chat-stream.mjs')
   await runGeminiChatStreamToPush(body, env, push)
 }

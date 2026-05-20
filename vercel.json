@@ -18,7 +18,8 @@
   ],
   "functions": {
     "api/openai/chat.js": {
-      "maxDuration": 300
+      "maxDuration": 60,
+      "includeFiles": "server/**"
     },
     "api/submissions/**/*.js": {
       "maxDuration": 30

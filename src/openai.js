@@ -58,6 +58,10 @@ function parseApiError(raw, status) {
     return 'AI 서버가 일시적으로 바쁩니다. 10~20초 뒤 같은 질문을 다시 보내 주세요.'
   }
 
+  if (/deployment|FUNCTION_INVOCATION|An error occurred with your deployment/i.test(text)) {
+    return 'AI 서버가 응답하지 못했습니다. Vercel에 GEMINI_API_KEY가 설정됐는지 확인하고 재배포해 주세요.'
+  }
+
   if (text.length > 280) {
     return `요청 실패 (${status}). 잠시 후 다시 시도해 주세요.`
   }
@@ -172,7 +176,7 @@ async function sendOpenAiChatStreaming(
     throw new Error('이미지·대화가 너무 큽니다. 사진 수를 줄여 주세요.')
   }
 
-  const timeoutMs = isProductionDeploy() ? 310_000 : 180_000
+  const timeoutMs = isProductionDeploy() ? 65_000 : 180_000
 
   options?.onStatus?.('Pro 분석 연결 중…')
 

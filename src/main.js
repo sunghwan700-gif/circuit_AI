@@ -1489,7 +1489,7 @@ function renderChatMessages(container, opts = {}) {
       <div class="chat-turn__column">
         <span class="chat-turn__label">Circuit AI</span>
         <div class="chat-bubble chat-bubble--assistant chat-bubble--pending">
-          <motion.div class="chat-bubble__content chat-bubble__content--pending">
+          <div class="chat-bubble__content chat-bubble__content--pending">
             <span class="chat-spinner" aria-hidden="true"></span>
             <span class="chat-pending-text">답변을 작성하는 중…</span>
           </div>

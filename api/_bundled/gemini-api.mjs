@@ -69,13 +69,24 @@ async function prepareGeminiChatRequest(body, env) {
     primaryModel = explicitModel || defaultModel;
   }
   const useProPrimary = /pro/i.test(primaryModel);
-  const chatFallbackDefault = "gemini-2.5-flash,gemini-2.0-flash";
+  const proOnlyFlag = String(env.GEMINI_PRO_ONLY ?? "").trim().toLowerCase();
+  const proOnly = proOnlyFlag === "1" || proOnlyFlag === "true" || proOnlyFlag !== "0" && proOnlyFlag !== "false" && useProPrimary && preferFlashBody !== true;
+  const chatFallbackDefault = proOnly ? "" : "gemini-2.5-flash,gemini-2.0-flash";
   const fallbackModels = String(
-    env.GEMINI_FALLBACK_MODELS || chatFallbackDefault
-  ).split(",").map((s) => normalizeModel(s)).filter(Boolean);
+    env.GEMINI_FALLBACK_MODELS ?? chatFallbackDefault
+  ).split(",").map((s) => normalizeModel(s)).filter(Boolean).filter((m) => !proOnly || /pro/i.test(m));
   const isBgJob = String(env.GEMINI_BG_JOB || "").trim() === "1";
-  let modelCandidates = dedupeModels2([primaryModel, ...fallbackModels]);
-  if (useProPrimary || isBgJob) {
+  let modelCandidates = dedupeModels2(
+    proOnly ? [primaryModel] : [primaryModel, ...fallbackModels]
+  );
+  if (proOnly) {
+    modelCandidates = modelCandidates.filter((m) => /pro/i.test(m));
+    if (!modelCandidates.length) {
+      modelCandidates = dedupeModels2([
+        chatModelEnv || explicitModel || "gemini-2.5-pro"
+      ]).filter((m) => /pro/i.test(m));
+    }
+  } else if (useProPrimary || isBgJob) {
     const proFirst = modelCandidates.filter((m) => /pro/i.test(m));
     const rest = modelCandidates.filter((m) => !/pro/i.test(m));
     modelCandidates = [...proFirst, ...rest];
@@ -104,10 +115,10 @@ async function prepareGeminiChatRequest(body, env) {
 ${contextDescription}`
   );
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || "").trim());
-  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3584 : isTeacherDraftJob ? useProPrimary ? 3072 : 2560 : useProPrimary ? syncProTight ? isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 4096 : serverlessCompact ? 3584 : 6144;
+  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 2048 : 1792 : isTeacherDraftJob ? useProPrimary ? 1536 : 1280 : useProPrimary ? syncProTight ? isChatJob ? wantsDetail ? 2048 : 1536 : 2048 : isChatJob ? wantsDetail ? 2048 : 1536 : 2048 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
-  const modelCandidatesRun = serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
-  const maxContinues = syncProTight && isChatJob ? 0 : isReportJsonJob || isTeacherDraftJob ? isServerlessDeploy ? 2 : 3 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 3 : useProPrimary ? 3 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
+  const modelCandidatesRun = proOnly ? modelCandidates.slice(0, 1) : serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
+  const maxContinues = syncProTight && isChatJob ? 0 : isReportJsonJob || isTeacherDraftJob ? isServerlessDeploy ? 2 : 3 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? proOnly ? 1 : 2 : useProPrimary ? 2 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
   const retryDelaysMs = isBgJob ? [700, 1500, 3e3, 5e3, 8e3] : syncProTight ? [300, 700, 1200] : serverlessCompact ? [400, 900, 1800] : [250, 750, 1500, 3e3];
   const fetchTimeoutParsed = Number(String(env.GEMINI_FETCH_TIMEOUT_MS || "").trim());
   const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? syncProTight ? 23e3 : 24e3 : 12e4;
@@ -162,16 +173,14 @@ ${isReportJsonJob ? `\u3010\uBCF4\uACE0\uC11C JSON \uC791\uC5C5\u3011
 - \uD0A4 summary, swot {s,w,o,t} \uB97C \uCC44\uC6C1\uB2C8\uB2E4.
 - Circuit Chatbot \uB300\uD654\xB7\uCCA8\uBD80 \uC774\uBBF8\uC9C0\xB7\uC790\uAE30\uD3C9\uAC00\xB7\uD559\uC2B5\uC790 SWOT \uCD08\uC548\uC744 **\uD568\uAED8 \uC77D\uACE0** \uC77C\uAD00\uB41C \uC885\uD569 \uD53C\uB4DC\uBC31\uC744 \uB9CC\uB4ED\uB2C8\uB2E4. \uB300\uD654\uB97C \uBB34\uC2DC\uD55C \uC77C\uBC18\uB860\xB7\uB3D9\uBB38\uC11C\uB2F5 \uAE08\uC9C0.
 - \uC790\uB8CC\uC5D0 \uC5C6\uB294 \uB2E8\uC790\xB7\uBC30\uC120\xB7\uACE0\uC7A5 \uB2E8\uC815 \uAE08\uC9C0.` : isTeacherDraftJob ? `\u3010\uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548\u3011
-- \uC81C\uCD9C\uB41C SWOT\xB7\uC790\uAE30\uD3C9\uAC00\xB7\uC0AC\uC9C4\xB7\uC2E4\uC2B5 \uB9E5\uB77D\uB9CC \uADFC\uAC70\uB85C \uD559\uC0DD\uC5D0\uAC8C \uBCF4\uB0BC \uD53C\uB4DC\uBC31 \uCD08\uC548\uC744 \uC791\uC131\uD569\uB2C8\uB2E4.
-- **\uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615**(## \uC18C\uC81C\uBAA9, - \uBD88\uB9BF). \uBD84\uB7C9 400~900\uC790.
-- \uAD8C\uC7A5 \uAD6C\uC870: ## \uCD1D\uD3C9 \u2192 ## \uC798\uD55C \uC810 \u2192 ## \uBCF4\uC644\xB7\uB2E4\uC74C \uC2E4\uC2B5 \u2192 ## \uC548\uC804\xB7\uD655\uC778(\uD574\uB2F9 \uC2DC)
-- \uC81C\uCD9C\xB7\uC0AC\uC9C4\uC5D0 \uC5C6\uB294 \uC0AC\uC2E4\uC740 \uC4F0\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.` : isChatJob ? wantsDetail ? `\uCC44\uD305(\uC0C1\uC138\xB7\uBAA9\uB85D\xB7\uC811\uC810 \uC694\uCCAD):
-- \uB9C8\uC9C0\uB9C9 \uC9C8\uBB38\uC5D0 \uC9C1\uC811 \uB2F5\uD569\uB2C8\uB2E4. **\uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615**(## + \uBD88\uB9BF). \uBD84\uB7C9 \uCD5C\uB300 1000\uC790. \uBD88\uB9BF\xB7\uD56D\uBAA9\uC740 \uB05D\uAE4C\uC9C0 \uC644\uACB0.
-- \uC811\uC810\xB7\uB2E8\uC790 \uBC88\uD638\uB294 \uB3C4\uBA74\xB7\uC0AC\uC9C4 \uD45C\uAE30\uB9CC. EOCR\xB7MC\xB7PB \uBC88\uD638\uB97C \uC11E\uC9C0 \uB9C8\uC138\uC694.` : `\uCC44\uD305 \uB2F5\uBCC0 \uADDC\uCE59:
-- \uB9C8\uC9C0\uB9C9 \uD559\uC0DD \uC9C8\uBB38\uC5D0 **\uC9C1\uC811** \uB2F5\uD569\uB2C8\uB2E4(\uB3D9\uBB38\uC11C\uB2F5\xB7\uC77C\uBC18\uB860 \uAC15\uC758 \uAE08\uC9C0).
-- **\uAC00\uB3C5\uC131**: \uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615 \u2014 ## \uD55C \uC904 \uC694\uC57D \u2192 ## \uADFC\uAC70(\uBD88\uB9BF 2~4) \u2192 ## \uC9C0\uAE08 \uD560 \uC77C(\uBD88\uB9BF 2~3). \uC548\uC804 \uC774\uC288\uB294 \uB9E8 \uC704 ## \uC548\uC804(1~2\uBB38\uC7A5).
-- \uBD84\uB7C9: 400~800\uC790(\uC870\uAE08 \uAE38\uC5B4\uB3C4 \uB428). \uBD88\uB9BF\xB7\uAD04\uD638\uB294 \uBC18\uB4DC\uC2DC \uC644\uACB0.
-- \uC7A5\uD669\uD55C \uC11C\uB450\xB7\uC6A9\uC5B4 \uC0AC\uC804\xB7\uC911\uBCF5 \uAE08\uC9C0.` : ""}
+- \uC81C\uCD9C SWOT\xB7\uC790\uAE30\uD3C9\uAC00\xB7\uC0AC\uC9C4\uB9CC \uADFC\uAC70\uB85C \uD53C\uB4DC\uBC31 \uCD08\uC548 \uC791\uC131.
+- **\uC9E7\uC740 \uAC1C\uC694\uD615**: ## \uCD1D\uD3C9(1~2\uBB38\uC7A5) \u2192 ## \uC798\uD55C \uC810(\uBD88\uB9BF 1~2) \u2192 ## \uBCF4\uC644(\uBD88\uB9BF 1~2) \u2192 ## \uC548\uC804(\uD574\uB2F9 \uC2DC 1\uBB38\uC7A5). **250~450\uC790**.
+- \uC81C\uCD9C\uC5D0 \uC5C6\uB294 \uC0AC\uC2E4\xB7\uB2E8\uC790 \uBC88\uD638 \uAE08\uC9C0.` : isChatJob ? wantsDetail ? `\uCC44\uD305(\uC0C1\uC138\xB7\uBAA9\uB85D\xB7\uC811\uC810):
+- \uC9C8\uBB38\uC5D0 \uC9C1\uC811 \uB2F5\uD568. ## \uC694\uC57D(1\uC904) \u2192 ## \uD575\uC2EC(\uBD88\uB9BF 3~5, \uB05D\uAE4C\uC9C0 \uC644\uACB0). **\uCD5C\uB300 500\uC790**.
+- \uC811\uC810\xB7\uB2E8\uC790\uB294 \uB3C4\uBA74 \uD45C\uAE30\uB9CC.` : `\uCC44\uD305 \uB2F5\uBCC0(\uC694\uC57D\uD615):
+- \uB9C8\uC9C0\uB9C9 \uC9C8\uBB38\uC5D0 **\uC9C1\uC811** \uB2F5\uD568. \uB3D9\uBB38\uC11C\uB2F5\xB7\uAC15\uC758 \uAE08\uC9C0.
+- \uD615\uC2DD: ## \uC694\uC57D(1\uC904) \u2192 ## \uD575\uC2EC(\uBD88\uB9BF 2~3) \u2192 ## \uD560 \uC77C(\uBD88\uB9BF 1~2). \uC548\uC804\uC740 \uB9E8 \uC704 ## \uC548\uC804(1\uBB38\uC7A5).
+- **200~380\uC790**. \uC9E7\uACE0 \uBA85\uD655\uD558\uAC8C.` : ""}
 
 \uC815\uD655\uC131(\uD658\uAC01 \uBC29\uC9C0):
 - \uD655\uC778\uD55C \uC0AC\uC2E4\uB9CC \uC501\uB2C8\uB2E4. \uBD88\uD655\uC2E4\uD558\uBA74 "\uB3C4\uBA74\xB7\uC2E4\uBB3C \uD655\uC778 \uD544\uC694" \uD55C \uC904.
@@ -238,7 +247,7 @@ ${practiceExtra}` : ""}`;
       const qBlock = isReportJsonJob || isTeacherDraftJob ? `\u3010\uC791\uC5C5 \uC9C0\uC2DC\u3011
 ${lastUserQuestion || "(\uC9C0\uC2DC\uBB38 \uCC38\uACE0)"}` : lastUserQuestion ? `\u3010\uC774\uBC88 \uD559\uC0DD \uC9C8\uBB38 \u2014 \uC774\uAC83\uC5D0\uB9CC \uB2F5\uD560 \uAC83\u3011
 ${lastUserQuestion}` : "\u3010\uC774\uBC88 \uD559\uC0DD \uC9C8\uBB38\u3011 (\uD14D\uC2A4\uD2B8 \uC5C6\uC74C \u2014 \uC774\uBBF8\uC9C0 \uAE30\uC900\uC73C\uB85C \uC548\uB0B4)";
-      const lengthHint = isReportJsonJob ? "JSON\uB9CC \uCD9C\uB825. \uB300\uD654\xB7\uC0AC\uC9C4\xB7\uC790\uAE30\uD3C9\uAC00\xB7SWOT \uCD08\uC548\uC744 \uBC18\uC601\uD574 summary\uC640 swot\uB97C \uCC44\uC6B0\uC138\uC694." : isTeacherDraftJob ? "\uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548\uC744 ## \uC18C\uC81C\uBAA9\xB7\uBD88\uB9BF \uAC1C\uC694\uD615(400~900\uC790)\uC73C\uB85C \uC791\uC131\uD558\uC138\uC694." : wantsDetail ? "\uC0C1\uC138 \uBAA9\uB85D\xB7\uD45C\uB294 \uBD88\uB9BF\uC744 \uB05D\uAE4C\uC9C0 \uC644\uACB0(\uCD5C\uB300 1000\uC790). \uC811\uC810 \uBC88\uD638\uB294 \uB3C4\uBA74 \uD45C\uAE30\uB9CC." : "\uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615(## \uC694\uC57D\xB7\uADFC\uAC70\xB7\uD560 \uC77C). 400~800\uC790. \uC9C8\uBB38\uC5D0 \uC9C1\uC811 \uB2F5\uD558\uC138\uC694.";
+      const lengthHint = isReportJsonJob ? "JSON\uB9CC. summary 2~4\uBB38\uC7A5, swot \uAC01 1\uBB38\uC7A5. \uB300\uD654\xB7SWOT \uBC18\uC601." : isTeacherDraftJob ? "\uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548: ## \uCD1D\uD3C9\xB7\uC798\uD55C \uC810\xB7\uBCF4\uC644, 250~450\uC790." : wantsDetail ? "## \uC694\uC57D + \uBD88\uB9BF 3~5\uAC1C, \uCD5C\uB300 500\uC790. \uB05D\uAE4C\uC9C0 \uC644\uACB0." : "## \uC694\uC57D\xB7\uD575\uC2EC\xB7\uD560 \uC77C, 200~380\uC790. \uC9E7\uAC8C \uC694\uC57D.";
       contents[lastUserIdx].parts.unshift({
         text: `${qBlock}
 
@@ -273,7 +282,8 @@ ${lengthHint}`
       lastUserQuestion,
       wantsDetail,
       isReportJsonJob,
-      isTeacherDraftJob
+      isTeacherDraftJob,
+      proOnly
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -450,7 +460,7 @@ async function runGeminiChatProxy(body, env) {
         break;
       }
     }
-    if (!out.trim() && imageList.length && isChatJob) {
+    if (!out.trim() && imageList.length && isChatJob && !prep.proOnly) {
       const textContents = stripInlineImagesFromContents2(contents);
       const lastIdx = textContents.length - 1;
       if (lastIdx >= 0 && textContents[lastIdx]?.role === "user") {
@@ -912,7 +922,8 @@ function deployEnv(extra = {}) {
     VERCEL: onVercel ? "1" : process.env.VERCEL || "",
     ...onVercel ? {
       GEMINI_SERVERLESS_COMPACT: extra.GEMINI_SERVERLESS_COMPACT ?? process.env.GEMINI_SERVERLESS_COMPACT ?? "0",
-      GEMINI_FETCH_TIMEOUT_MS: extra.GEMINI_FETCH_TIMEOUT_MS ?? process.env.GEMINI_FETCH_TIMEOUT_MS ?? "55000"
+      GEMINI_FETCH_TIMEOUT_MS: extra.GEMINI_FETCH_TIMEOUT_MS ?? process.env.GEMINI_FETCH_TIMEOUT_MS ?? "55000",
+      GEMINI_PRO_ONLY: extra.GEMINI_PRO_ONLY ?? process.env.GEMINI_PRO_ONLY ?? "1"
     } : {}
   };
 }

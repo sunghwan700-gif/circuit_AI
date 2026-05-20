@@ -100,20 +100,39 @@ export async function prepareGeminiChatRequest(body, env) {
 
   const useProPrimary = /pro/i.test(primaryModel)
 
-  const chatFallbackDefault = 'gemini-2.5-flash,gemini-2.0-flash'
+  const proOnlyFlag = String(env.GEMINI_PRO_ONLY ?? '').trim().toLowerCase()
+  const proOnly =
+    proOnlyFlag === '1' ||
+    proOnlyFlag === 'true' ||
+    (proOnlyFlag !== '0' &&
+      proOnlyFlag !== 'false' &&
+      useProPrimary &&
+      preferFlashBody !== true)
+
+  const chatFallbackDefault = proOnly ? '' : 'gemini-2.5-flash,gemini-2.0-flash'
 
   const fallbackModels = String(
-    env.GEMINI_FALLBACK_MODELS || chatFallbackDefault,
+    env.GEMINI_FALLBACK_MODELS ?? chatFallbackDefault,
   )
     .split(',')
     .map((s) => normalizeModel(s))
     .filter(Boolean)
+    .filter((m) => !proOnly || /pro/i.test(m))
 
   /** Background 작업(GEMINI_BG_JOB)은 동기 한도 없음 */
   const isBgJob = String(env.GEMINI_BG_JOB || '').trim() === '1'
 
-  let modelCandidates = dedupeModels([primaryModel, ...fallbackModels])
-  if (useProPrimary || isBgJob) {
+  let modelCandidates = dedupeModels(
+    proOnly ? [primaryModel] : [primaryModel, ...fallbackModels],
+  )
+  if (proOnly) {
+    modelCandidates = modelCandidates.filter((m) => /pro/i.test(m))
+    if (!modelCandidates.length) {
+      modelCandidates = dedupeModels([
+        chatModelEnv || explicitModel || 'gemini-2.5-pro',
+      ]).filter((m) => /pro/i.test(m))
+    }
+  } else if (useProPrimary || isBgJob) {
     const proFirst = modelCandidates.filter((m) => /pro/i.test(m))
     const rest = modelCandidates.filter((m) => !/pro/i.test(m))
     modelCandidates = [...proFirst, ...rest]
@@ -152,24 +171,24 @@ export async function prepareGeminiChatRequest(body, env) {
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
   const defaultMaxTokens = isReportJsonJob
     ? useProPrimary
-      ? 4096
-      : 3584
+      ? 2048
+      : 1792
     : isTeacherDraftJob
       ? useProPrimary
-        ? 3072
-        : 2560
+        ? 1536
+        : 1280
       : useProPrimary
         ? syncProTight
           ? isChatJob
             ? wantsDetail
-              ? 4096
-              : 3072
-            : 2560
+              ? 2048
+              : 1536
+            : 2048
           : isChatJob
             ? wantsDetail
-              ? 4096
-              : 3072
-            : 4096
+              ? 2048
+              : 1536
+            : 2048
     : serverlessCompact
       ? 3584
       : 6144
@@ -181,9 +200,11 @@ export async function prepareGeminiChatRequest(body, env) {
       : defaultMaxTokens
 
   const modelCandidatesRun =
-    serverlessCompact && !isBgJob
-      ? modelCandidates.slice(0, useProPrimary ? 3 : 2)
-      : modelCandidates
+    proOnly
+      ? modelCandidates.slice(0, 1)
+      : serverlessCompact && !isBgJob
+        ? modelCandidates.slice(0, useProPrimary ? 3 : 2)
+        : modelCandidates
 
   const maxContinues =
     syncProTight && isChatJob
@@ -196,9 +217,11 @@ export async function prepareGeminiChatRequest(body, env) {
           ? 2
           : isChatJob
             ? isServerlessDeploy
-              ? 3
+              ? proOnly
+                ? 1
+                : 2
               : useProPrimary
-                ? 3
+                ? 2
                 : 2
             : useProPrimary
             ? syncProTight
@@ -293,20 +316,18 @@ ${
 - 자료에 없는 단자·배선·고장 단정 금지.`
       : isTeacherDraftJob
         ? `【교사 피드백 초안】
-- 제출된 SWOT·자기평가·사진·실습 맥락만 근거로 학생에게 보낼 피드백 초안을 작성합니다.
-- **마크다운 개요형**(## 소제목, - 불릿). 분량 400~900자.
-- 권장 구조: ## 총평 → ## 잘한 점 → ## 보완·다음 실습 → ## 안전·확인(해당 시)
-- 제출·사진에 없는 사실은 쓰지 않습니다.`
+- 제출 SWOT·자기평가·사진만 근거로 피드백 초안 작성.
+- **짧은 개요형**: ## 총평(1~2문장) → ## 잘한 점(불릿 1~2) → ## 보완(불릿 1~2) → ## 안전(해당 시 1문장). **250~450자**.
+- 제출에 없는 사실·단자 번호 금지.`
         : isChatJob
           ? wantsDetail
-            ? `채팅(상세·목록·접점 요청):
-- 마지막 질문에 직접 답합니다. **마크다운 개요형**(## + 불릿). 분량 최대 1000자. 불릿·항목은 끝까지 완결.
-- 접점·단자 번호는 도면·사진 표기만. EOCR·MC·PB 번호를 섞지 마세요.`
-            : `채팅 답변 규칙:
-- 마지막 학생 질문에 **직접** 답합니다(동문서답·일반론 강의 금지).
-- **가독성**: 마크다운 개요형 — ## 한 줄 요약 → ## 근거(불릿 2~4) → ## 지금 할 일(불릿 2~3). 안전 이슈는 맨 위 ## 안전(1~2문장).
-- 분량: 400~800자(조금 길어도 됨). 불릿·괄호는 반드시 완결.
-- 장황한 서두·용어 사전·중복 금지.`
+            ? `채팅(상세·목록·접점):
+- 질문에 직접 답함. ## 요약(1줄) → ## 핵심(불릿 3~5, 끝까지 완결). **최대 500자**.
+- 접점·단자는 도면 표기만.`
+            : `채팅 답변(요약형):
+- 마지막 질문에 **직접** 답함. 동문서답·강의 금지.
+- 형식: ## 요약(1줄) → ## 핵심(불릿 2~3) → ## 할 일(불릿 1~2). 안전은 맨 위 ## 안전(1문장).
+- **200~380자**. 짧고 명확하게.`
           : ''
   }
 
@@ -402,12 +423,12 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
             ? `【이번 학생 질문 — 이것에만 답할 것】\n${lastUserQuestion}`
             : '【이번 학생 질문】 (텍스트 없음 — 이미지 기준으로 안내)'
       const lengthHint = isReportJsonJob
-        ? 'JSON만 출력. 대화·사진·자기평가·SWOT 초안을 반영해 summary와 swot를 채우세요.'
+        ? 'JSON만. summary 2~4문장, swot 각 1문장. 대화·SWOT 반영.'
         : isTeacherDraftJob
-          ? '교사 피드백 초안을 ## 소제목·불릿 개요형(400~900자)으로 작성하세요.'
+          ? '교사 피드백 초안: ## 총평·잘한 점·보완, 250~450자.'
           : wantsDetail
-            ? '상세 목록·표는 불릿을 끝까지 완결(최대 1000자). 접점 번호는 도면 표기만.'
-            : '마크다운 개요형(## 요약·근거·할 일). 400~800자. 질문에 직접 답하세요.'
+            ? '## 요약 + 불릿 3~5개, 최대 500자. 끝까지 완결.'
+            : '## 요약·핵심·할 일, 200~380자. 짧게 요약.'
       contents[lastUserIdx].parts.unshift({
         text: `${qBlock}\n\n【참고 이미지】${attachNote || '첨부됨'}\n${lengthHint}`,
       })
@@ -442,6 +463,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       wantsDetail,
       isReportJsonJob,
       isTeacherDraftJob,
+      proOnly,
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -667,7 +689,7 @@ export async function runGeminiChatProxy(body, env) {
       }
     }
 
-    if (!out.trim() && imageList.length && isChatJob) {
+    if (!out.trim() && imageList.length && isChatJob && !prep.proOnly) {
       const textContents = stripInlineImagesFromContents(contents)
       const lastIdx = textContents.length - 1
       if (lastIdx >= 0 && textContents[lastIdx]?.role === 'user') {

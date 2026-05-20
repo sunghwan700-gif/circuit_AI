@@ -9,7 +9,6 @@ import {
 } from './journal-hwpx.js'
 import { buildJournalPdfElement, saveElementAsPdf } from './journal-pdf.js'
 import {
-  compressDataUrlJpeg,
   fileToCompressedJpegDataUrl,
   fetchRemoteFeedbackStatus,
   getLastSeenCount,
@@ -336,45 +335,32 @@ function describeUploadedMaterialsForAi() {
   return `업로드: ${parts.join(', ')}. 대화 내용과 함께 반영하세요.`
 }
 
+function truncateForTeacherDraft(s, max) {
+  const t = String(s || '').replace(/\s+/g, ' ').trim()
+  if (!t) return ''
+  if (t.length <= max) return t
+  return `${t.slice(0, max)}…`
+}
+
 function buildTeacherDraftContext(detail) {
   const lines = [
     `학습자: ${detail.student.info}, 학과: ${detail.student.dept}, 과목: ${detail.student.subject}`,
-    `자기평가: ${String(detail.selfEval || '').trim() || '(없음)'}`,
-    `SWOT(제출): S=${detail.swot?.s || '(없음)'} | W=${detail.swot?.w || '(없음)'} | O=${detail.swot?.o || '(없음)'} | T=${detail.swot?.t || '(없음)'}`,
+    `자기평가(요약): ${truncateForTeacherDraft(detail.selfEval, 120)}`,
+    `SWOT 한 줄: S=${truncateForTeacherDraft(detail.swot?.s, 80)} | W=${truncateForTeacherDraft(detail.swot?.w, 80)} | O=${truncateForTeacherDraft(detail.swot?.o, 80)} | T=${truncateForTeacherDraft(detail.swot?.t, 80)}`,
   ]
   const summary = String(detail.aiSummary || '').trim()
   if (summary) {
-    lines.push(`\n【AI 종합 피드백(학습자 보고서)】\n${summary}`)
+    lines.push(
+      `\n【학습자 AI 종합 피드백(발췌, 최대 400자)】\n${truncateForTeacherDraft(summary, 400)}`,
+    )
   }
   const chat = String(detail.chatTranscript || '').trim()
   if (chat) {
-    lines.push(`\n【Circuit Chatbot 대화(학습자 실습 중 질문·AI 답)】\n${chat}`)
+    lines.push(
+      `\n【챗봇 대화 말미 발췌(최대 350자) — 전체 반영 불필요】\n${truncateForTeacherDraft(chat.slice(-600), 350)}`,
+    )
   }
   return lines.join('\n')
-}
-
-/** @param {import('./teacher-storage.js').SubmissionRecord} detail */
-async function buildTeacherApiImages(detail) {
-  /** @type {{ dataUrl: string, label?: string }[]} */
-  const images = []
-  if (detail.images?.circuit) {
-    try {
-      const dataUrl = await compressDataUrlJpeg(detail.images.circuit, 960, 0.72)
-      if (dataUrl) images.push({ label: '제출 회로도', dataUrl })
-    } catch {
-      /* ignore */
-    }
-  }
-  const finalShot = detail.images?.final?.[0]
-  if (finalShot) {
-    try {
-      const dataUrl = await compressDataUrlJpeg(finalShot, 880, 0.7)
-      if (dataUrl) images.push({ label: '제출 최종 결과', dataUrl })
-    } catch {
-      /* ignore */
-    }
-  }
-  return images
 }
 
 function tryParseJsonLoose(s) {
@@ -1177,42 +1163,32 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
       }
       aiBtn.disabled = true
       msg.className = 'success-msg teacher-detail__msg'
-      msg.textContent = 'AI가 초안을 작성 중입니다…'
+      msg.textContent = '간단한 초안을 작성 중입니다…'
       const draftPrompt =
-        `아래는 **한 학습자의 제출 자료 전체**입니다(대화·종합 피드백·SWOT·자기평가). 이 내용만 근거로 교사가 학생에게 보낼 **피드백 초안**을 작성하세요.\n\n` +
-        `형식: ## 총평(2~3문장) → ## 잘한 점(불릿 2~3) → ## 보완·다음 실습(불릿 2~3) → ## 안전(해당 시). **400~650자**, 한 번에 완결.\n` +
-        `Circuit Chatbot 대화·AI 종합 피드백을 반드시 반영하세요. 제출에 없는 사실·단자 번호는 쓰지 마세요.\n\n` +
+        `아래 **발췌된 제출 요약**만 보고, 교사가 학생에게 보낼 **짧은 피드백 초안**을 써 주세요.\n\n` +
+        `규칙:\n` +
+        `- **2~5문장** 또는 불릿 3~4개. **총 150~280자** 정도로 짧게.\n` +
+        `- 총평 1문장 + 잘한 점 1문장 + 보완·다음에 할 일 1~2문장 정도면 충분합니다.\n` +
+        `- 장문의 채팅·사진을 모두 반영하려 하지 마세요. 발췌만 참고하세요.\n` +
+        `- 제출에 없는 사실·단자 번호는 쓰지 마세요.\n\n` +
         context
       const teacherPractice = `제출 학습자: ${detail.student.dept || ''} / ${detail.student.subject || ''} / ${detail.student.info || ''}`
       const draftOpts = {
         skipRefine: true,
         aiTask: 'teacher-draft',
         practiceContext: teacherPractice,
-        maxAttempts: 4,
+        maxAttempts: 2,
       }
       try {
-        let draft = ''
-        try {
-          draft = await sendOpenAiChat(
-            [{ role: 'user', content: draftPrompt }],
-            '교사용 개별 피드백 초안',
-            undefined,
-            { ...draftOpts, hasImages: false },
-          )
-        } catch (textErr) {
-          const teacherImages = await buildTeacherApiImages(detail)
-          if (!teacherImages.length) throw textErr
-          msg.textContent = '사진을 포함해 다시 생성 중입니다…'
-          draft = await sendOpenAiChat(
-            [{ role: 'user', content: draftPrompt }],
-            '교사용 개별 피드백 초안',
-            teacherImages,
-            { ...draftOpts, hasImages: true },
-          )
-        }
+        const draft = await sendOpenAiChat(
+          [{ role: 'user', content: draftPrompt }],
+          '교사용 개별 피드백 초안',
+          undefined,
+          { ...draftOpts, hasImages: false },
+        )
         ta.value = draft
         msg.className = 'success-msg teacher-detail__msg'
-        msg.textContent = '초안을 입력란에 넣었습니다. 검토 후 저장하세요.'
+        msg.textContent = '짧은 초안을 입력란에 넣었습니다. 검토 후 저장하세요.'
       } catch (e) {
         msg.className = 'info-banner teacher-detail__msg'
         msg.textContent =

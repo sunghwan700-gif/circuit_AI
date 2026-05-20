@@ -175,8 +175,8 @@ export async function prepareGeminiChatRequest(body, env) {
       : 3072
     : isTeacherDraftJob
       ? useProPrimary
-        ? 1536
-        : 1280
+        ? 896
+        : 768
       : useProPrimary
         ? syncProTight
           ? isChatJob
@@ -209,7 +209,9 @@ export async function prepareGeminiChatRequest(body, env) {
       ? 0
       : isReportJsonJob || isTeacherDraftJob
         ? isServerlessDeploy
-          ? 3
+          ? isTeacherDraftJob
+            ? 1
+            : 3
           : 4
         : isBgJob && isChatJob
           ? 2
@@ -319,10 +321,10 @@ ${
 - 실습 사진이 없으면 대화·자기평가만으로 작성하고, 사진 없이 배선·실물을 단정하지 마세요.
 - 자료에 없는 단자·배선·고장 단정 금지.`
       : isTeacherDraftJob
-        ? `【교사 피드백 초안】
-- 제출의 Circuit Chatbot 대화·AI 종합 피드백·SWOT·자기평가·사진을 모두 읽고 피드백 초안 작성. 대화·종합 피드백을 반드시 반영.
-- **한 번에 완결**: ## 총평(2~3문장) → ## 잘한 점(불릿 2~3) → ## 보완·다음 실습(불릿 2~3) → ## 안전·확인(해당 시 1~2문장). **400~650자**.
-- 중요 내용은 빠뜨리지 말되 장황한 반복은 금지. 제출에 없는 사실·단자 번호 금지.`
+        ? `【교사 피드백 초안 — 짧게】
+- 아래 사용자 프롬프트의 **발췌된 요약**만 보고, 학생에게 보낼 **매우 짧은 피드백 초안**을 씁니다.
+- **150~280자**, 문장 2~5개 또는 불릿 3~4개. ## 소제목은 써도 되고 생략해도 됩니다.
+- 채팅·사진 전부를 반영하려 하지 말 것. 발췌에 없는 내용·단자 번호 금지.`
         : isChatJob
           ? wantsDetail
             ? `채팅(상세·목록·접점):
@@ -353,8 +355,8 @@ ${
         : `이미지 없음: 대화·자기평가·SWOT 초안만으로 JSON을 채우세요.`
       : isTeacherDraftJob
         ? hasImages
-          ? `제출 회로도·결과 사진을 보고 피드백 초안에 반영하세요.`
-          : `사진 없음: 텍스트 제출(SWOT·자기평가)만 근거로 초안을 작성하세요.`
+          ? `첨부 이미지가 있어도 짧은 초안만 쓰세요. 이미지 세부까지 길게 쓰지 마세요.`
+          : `텍스트 발췌만으로 짧은 초안을 쓰세요.`
         : hasImages && isChatJob
           ? `첨부 이미지(회로도·실습 사진)는 마지막 학생 질문에 답할 때 참고하세요.`
           : !hasImages && isChatJob
@@ -430,7 +432,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       const lengthHint = isReportJsonJob
         ? 'JSON만. summary 3~5문장, swot 각 1~2문장. 한 번에 완전한 JSON.'
         : isTeacherDraftJob
-          ? '피드백 초안: ## 총평·잘한 점·보완·안전 모두 작성, 400~650자.'
+          ? '짧은 교사 피드백 초안(150~280자)만 작성하세요.'
           : wantsDetail
             ? '## 요약·핵심·할 일을 한 번에 완결, 500~750자.'
             : '## 요약·핵심·할 일을 한 번에 완결, 350~550자. 중요 내용 포함.'
@@ -781,7 +783,7 @@ export async function runGeminiChatProxy(body, env) {
       const continueUserText = prep.isReportJsonJob
         ? 'JSON이 끊겼습니다. 끊긴 위치부터 유효한 JSON만 이어 완성하세요. 반복하지 마세요.'
         : prep.isTeacherDraftJob
-          ? '피드백 초안이 끊겼습니다. ## 보완·## 안전까지 개요형으로 이어 완결하세요.'
+          ? '초안이 끊겼습니다. 1~2문장만 이어서 280자 이내로 끝내세요.'
           : isChatJob
             ? '답변이 끊겼습니다. ## 핵심·## 할 일까지 이어 완결하세요. 반복하지 마세요.'
             : '방금 답변을 이어서 계속 작성해줘. 끊긴 지점부터 완결해줘.'
@@ -1110,7 +1112,7 @@ async function finalizeGeminiAnswer(
             text: prep.isReportJsonJob
               ? 'JSON 출력이 끊겼습니다. 끊긴 위치부터 **유효한 JSON만** 이어 완성하세요. 이미 출력한 부분은 반복하지 마세요.'
               : prep.isTeacherDraftJob
-                ? '교사 피드백 초안이 끊겼습니다. 끊긴 위치부터 마크다운 개요형(##·불릿)으로 이어 쓰세요. 반복하지 마세요.'
+                ? '짧게 마무리하세요. ## 제목 없이 2~3문장만 이어도 됩니다.'
                 : prep.isChatJob
                   ? prep.wantsDetail
                     ? '답변이 끊겼습니다. 끊긴 불릿·항목부터 끝까지 이어 쓰세요. 마크다운 개요형 유지. 반복하지 마세요.'

@@ -171,8 +171,8 @@ export async function prepareGeminiChatRequest(body, env) {
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
   const defaultMaxTokens = isReportJsonJob
     ? useProPrimary
-      ? 2048
-      : 1792
+      ? 4096
+      : 3072
     : isTeacherDraftJob
       ? useProPrimary
         ? 1536
@@ -209,13 +209,13 @@ export async function prepareGeminiChatRequest(body, env) {
       ? 0
       : isReportJsonJob || isTeacherDraftJob
         ? isServerlessDeploy
-          ? 2
-          : 3
+          ? 3
+          : 4
         : isBgJob && isChatJob
           ? 2
           : isChatJob
             ? isServerlessDeploy
-              ? 4
+              ? 2
               : useProPrimary
                 ? 4
                 : 2
@@ -239,9 +239,11 @@ export async function prepareGeminiChatRequest(body, env) {
     Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5000
       ? Math.floor(fetchTimeoutParsed)
       : isServerlessDeploy
-        ? syncProTight
-          ? 23_000
-          : 24_000
+        ? isReportJsonJob || isTeacherDraftJob
+          ? 57_000
+          : syncProTight
+            ? 23_000
+            : 52_000
         : 120_000
 
   const preferOneshot =
@@ -467,6 +469,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       isTeacherDraftJob,
       proOnly,
       preferOneshot,
+      isServerlessDeploy,
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -942,6 +945,13 @@ function looksTruncatedOutline(text) {
     return true
   }
   if (/^##\s+\S/.test(lastLine) && lastLine.length < 20) return true
+  if (
+    t.length > 40 &&
+    /[가-힣]$/.test(t) &&
+    !/[.!?。…』」\)]\s*$/.test(t)
+  ) {
+    return true
+  }
 
   return false
 }
@@ -1081,7 +1091,8 @@ async function finalizeGeminiAnswer(
   push,
   initialFinishReason = '',
 ) {
-  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 5)
+  const cap = prep.isServerlessDeploy ? 2 : 5
+  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), cap)
   let out = String(text || '').trim()
   let finishReason = String(initialFinishReason || '')
 
@@ -1102,7 +1113,7 @@ async function finalizeGeminiAnswer(
                 : prep.isChatJob
                   ? prep.wantsDetail
                     ? '답변이 끊겼습니다. 끊긴 불릿·항목부터 끝까지 이어 쓰세요. 마크다운 개요형 유지. 반복하지 마세요.'
-                    : '답변이 끊겼습니다. 끊긴 위치부터 이어 쓰세요. ## 핵심·## 할 일까지 개요형으로 **완결**하세요. 반복하지 마세요.'
+                    : '답변이 끊겼습니다. 끊긴 **마지막 불릿/문장만** 이어 완결하세요. ## 핵심·## 할 일이 없으면 추가하고, 있으면 끊긴 부분만 1~2문장으로 마무리하세요. 반복하지 마세요.'
                   : '방금 답변을 이어서 계속 작성해줘. 끊긴 지점부터 이어서. 끝까지 완결해줘.',
           },
         ],
@@ -1322,11 +1333,21 @@ export async function runGeminiChatStreamToPush(body, env, push) {
   let lastMsg = 'AI가 답변을 만들지 못했습니다.'
 
   try {
+    if (prep.isReportJsonJob || prep.isTeacherDraftJob) {
+      clearInterval(pingTimer)
+      await runGeminiChatBufferedFallback(body, env, push)
+      return
+    }
+
+    const maxAttempts = prep.isServerlessDeploy ? 4 : 3
     for (const model of prep.modelCandidatesRun) {
-      for (let attempt = 0; attempt < 2; attempt++) {
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
         if (attempt > 0) {
-          push({ event: 'status', message: `다시 시도 중… (${attempt + 1}/2)` })
-          await new Promise((r) => setTimeout(r, 2000))
+          push({
+            event: 'status',
+            message: `잠시 후 다시 시도… (${attempt + 1}/${maxAttempts})`,
+          })
+          await new Promise((r) => setTimeout(r, 2500 + attempt * 1500))
         }
         try {
           const hit = await streamOneGeminiModel(prep, model, push)
@@ -1340,11 +1361,20 @@ export async function runGeminiChatStreamToPush(body, env, push) {
             hit.status === 429 ||
             hit.status === 503 ||
             hit.status === 502 ||
-            /overloaded|unavailable|empty_response/i.test(lastMsg)
+            hit.status === 504 ||
+            /overloaded|unavailable|empty_response|timeout|timed out|abort/i.test(
+              lastMsg,
+            )
           if (!retryable) break
         } catch (e) {
           lastMsg = e instanceof Error ? e.message : String(e)
-          if (!/timeout|abort|503|429|overloaded/i.test(lastMsg)) break
+          if (
+            !/timeout|abort|503|429|504|overloaded|timed out|deadline/i.test(
+              lastMsg,
+            )
+          ) {
+            break
+          }
         }
       }
     }

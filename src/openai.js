@@ -185,7 +185,15 @@ async function sendOpenAiChatStreaming(
     throw new Error('이미지·대화가 너무 큽니다. 사진 수를 줄여 주세요.')
   }
 
-  const timeoutMs = isProductionDeploy() ? 120_000 : 180_000
+  const isReport =
+    options?.aiTask === 'report-json' || options?.aiTask === 'teacher-draft'
+  const timeoutMs = isReport
+    ? isProductionDeploy()
+      ? 180_000
+      : 240_000
+    : isProductionDeploy()
+      ? 120_000
+      : 180_000
 
   options?.onStatus?.('Pro 분석 연결 중…')
 
@@ -228,6 +236,7 @@ export async function sendOpenAiChat(
   images,
   options = {},
 ) {
+  const attempts = options?.maxAttempts ?? 3
   return await withAutoRetry(
     () =>
       sendOpenAiChatStreaming(
@@ -237,5 +246,6 @@ export async function sendOpenAiChat(
         options,
       ),
     options,
+    attempts,
   )
 }

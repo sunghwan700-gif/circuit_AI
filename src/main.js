@@ -279,15 +279,23 @@ function renderMarkdownLiteToHtml(raw) {
   return out.join('\n')
 }
 
+function cleanSwotFieldText(v) {
+  let s = String(v ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!s || s === '—') return ''
+  s = s.replace(/^(Strength|Weakness|Opportunity|Threat)(\s*·\s*\1)?\s*·\s*/gi, '')
+  s = s.replace(/^(S|W|O|T)\s*[:：]\s*/i, '')
+  return s.trim()
+}
+
 function readSwotFromReport(root) {
-  const lis = root.querySelectorAll('.swot-list li')
   const keys = ['s', 'w', 'o', 't']
   const out = { s: '', w: '', o: '', t: '' }
-  lis.forEach((li, i) => {
-    const span = li.querySelector('span:last-of-type')
-    const k = keys[i]
-    if (k) out[k] = span?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
-  })
+  for (const k of keys) {
+    const el = root.querySelector(`.swot-list__v[data-k="${k}"]`)
+    out[k] = cleanSwotFieldText(el?.textContent)
+  }
   return out
 }
 
@@ -307,50 +315,49 @@ function buildChatTranscriptForReport() {
 function tryParseJsonLoose(s) {
   const raw = String(s || '').trim()
   if (!raw) return null
-  try {
-    return JSON.parse(raw)
-  } catch {
-    // ```json ... ``` 형태를 최대한 복구
-    const m = /```json\s*([\s\S]*?)```/i.exec(raw)
-    if (m?.[1]) {
-      try {
-        return JSON.parse(m[1])
-      } catch {
-        return null
-      }
+  const tryParse = (chunk) => {
+    try {
+      return JSON.parse(chunk)
+    } catch {
+      return null
     }
-    return null
   }
+  let j = tryParse(raw)
+  if (j) return j
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(raw)
+  if (fenced?.[1]) {
+    j = tryParse(fenced[1].trim())
+    if (j) return j
+  }
+  const start = raw.indexOf('{')
+  const end = raw.lastIndexOf('}')
+  if (start >= 0 && end > start) {
+    j = tryParse(raw.slice(start, end + 1))
+    if (j) return j
+  }
+  return null
 }
 
-async function generateAiReportInsights(opts = {}) {
-  if (!isOpenAiProxyAvailable()) return null
-
+async function buildAiImagesForReport() {
   /** @type {{ dataUrl: string, label?: string }[]} */
   const images = []
   if (state.data.circuitImg) {
     images.push({
       label: '회로도',
-      dataUrl: await fileToCompressedJpegDataUrl(state.data.circuitImg),
+      dataUrl: await fileToCompressedJpegDataUrl(
+        state.data.circuitImg,
+        isDeployTight() ? 1280 : 1600,
+        isDeployTight() ? 0.78 : 0.85,
+      ),
     })
   }
-  if (state.data.finalImgs?.length) {
-    const f = state.data.finalImgs[state.data.finalImgs.length - 1]
-    if (f) {
-      images.push({
-        label: '최종 결과 사진(최근)',
-        dataUrl: await fileToCompressedJpegDataUrl(f),
-      })
-    }
-  } else if (state.data.processImgs?.length) {
-    const f = state.data.processImgs[state.data.processImgs.length - 1]
-    if (f) {
-      images.push({
-        label: '실습 진행 사진(최근)',
-        dataUrl: await fileToCompressedJpegDataUrl(f),
-      })
-    }
-  }
+  return images
+}
+
+async function generateAiReportInsights(opts = {}) {
+  if (!isOpenAiProxyAvailable()) return null
+
+  const images = await buildAiImagesForReport()
 
   const transcript = buildChatTranscriptForReport()
   const practiceBlock = buildPracticeContextForAi()
@@ -389,19 +396,36 @@ ${transcript || '(대화 없음)'}
 ${practiceBlock}
 ${swotCtx ? `\n${swotCtx}\n` : ''}`
 
-  const text = await sendOpenAiChat(
-    [{ role: 'user', content: prompt }],
-    '최종 보고서(SWOT/종합 피드백) 생성',
-    images,
-    {
-      aiTask: 'report-json',
-      hasImages: images.length > 0,
-      practiceContext: practiceBlock,
-    },
-  )
+  const requestReport = async (imgs) =>
+    sendOpenAiChat(
+      [{ role: 'user', content: prompt }],
+      '최종 보고서(SWOT/종합 피드백) 생성',
+      imgs.length ? imgs : undefined,
+      {
+        aiTask: 'report-json',
+        hasImages: imgs.length > 0,
+        practiceContext: practiceBlock,
+        maxAttempts: 4,
+      },
+    )
+
+  let text
+  try {
+    text = await requestReport(images)
+  } catch (firstErr) {
+    if (images.length) {
+      text = await requestReport([])
+    } else {
+      throw firstErr
+    }
+  }
 
   const parsed = tryParseJsonLoose(text)
-  if (!parsed) return null
+  if (!parsed) {
+    throw new Error(
+      'SWOT·종합 피드백 JSON을 해석하지 못했습니다. 잠시 뒤 「최종 실습일지 생성」을 다시 눌러 주세요.',
+    )
+  }
   const swot = parsed.swot || {}
   return {
     summary: String(parsed.summary || '').trim(),
@@ -2099,9 +2123,15 @@ function render() {
         if (insights?.swot) {
           swot = insights.swot
           aiSummaryText = insights.summary || ''
+        } else {
+          throw new Error('AI가 SWOT·종합 피드백을 만들지 못했습니다.')
         }
-      } catch {
-        // 실패 시 기존(화면 값) 유지
+      } catch (e) {
+        msg.className = 'info-banner'
+        msg.textContent =
+          (e instanceof Error ? normalizeChatFetchError(e) : String(e)) +
+          ' (채팅·자기평가를 입력한 뒤, 회로도 1장만 올린 상태에서 다시 시도해 보세요.)'
+        return
       }
 
       // 화면에 반영

@@ -115,13 +115,13 @@ async function prepareGeminiChatRequest(body, env) {
 ${contextDescription}`
   );
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || "").trim());
-  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 2048 : 1792 : isTeacherDraftJob ? useProPrimary ? 1536 : 1280 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
+  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? useProPrimary ? 1536 : 1280 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
   const modelCandidatesRun = proOnly ? modelCandidates.slice(0, 1) : serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
-  const maxContinues = syncProTight && isChatJob ? 0 : isReportJsonJob || isTeacherDraftJob ? isServerlessDeploy ? 2 : 3 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 4 : useProPrimary ? 4 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
+  const maxContinues = syncProTight && isChatJob ? 0 : isReportJsonJob || isTeacherDraftJob ? isServerlessDeploy ? 3 : 4 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 2 : useProPrimary ? 4 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
   const retryDelaysMs = isBgJob ? [700, 1500, 3e3, 5e3, 8e3] : syncProTight ? [300, 700, 1200] : serverlessCompact ? [400, 900, 1800] : [250, 750, 1500, 3e3];
   const fetchTimeoutParsed = Number(String(env.GEMINI_FETCH_TIMEOUT_MS || "").trim());
-  const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? syncProTight ? 23e3 : 24e3 : 12e4;
+  const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? isReportJsonJob || isTeacherDraftJob ? 57e3 : syncProTight ? 23e3 : 52e3 : 12e4;
   const preferOneshot = isServerlessDeploy && !isBgJob && String(env.GEMINI_STREAM_CHAT ?? "0").trim() !== "1";
   const imageList = Array.isArray(images) ? images : [];
   const hasImages = imageList.length > 0 || hasImagesBody === true || hasImagesBody === "true";
@@ -286,7 +286,8 @@ ${lengthHint}`
       isReportJsonJob,
       isTeacherDraftJob,
       proOnly,
-      preferOneshot
+      preferOneshot,
+      isServerlessDeploy
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -658,6 +659,9 @@ function looksTruncatedOutline(text) {
     return true;
   }
   if (/^##\s+\S/.test(lastLine) && lastLine.length < 20) return true;
+  if (t.length > 40 && /[가-힣]$/.test(t) && !/[.!?。…』」\)]\s*$/.test(t)) {
+    return true;
+  }
   return false;
 }
 function looksTruncatedText(text, isChatJob = false) {
@@ -747,7 +751,8 @@ async function geminiGenerateOnce(prep, model, contents) {
   return { ok: true, text, finishReason };
 }
 async function finalizeGeminiAnswer(prep, model, text, push, initialFinishReason = "") {
-  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 5);
+  const cap = prep.isServerlessDeploy ? 2 : 5;
+  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), cap);
   let out = String(text || "").trim();
   let finishReason = String(initialFinishReason || "");
   for (let i = 0; i < maxRounds; i++) {
@@ -760,7 +765,7 @@ async function finalizeGeminiAnswer(prep, model, text, push, initialFinishReason
         role: "user",
         parts: [
           {
-            text: prep.isReportJsonJob ? "JSON \uCD9C\uB825\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 **\uC720\uD6A8\uD55C JSON\uB9CC** \uC774\uC5B4 \uC644\uC131\uD558\uC138\uC694. \uC774\uBBF8 \uCD9C\uB825\uD55C \uBD80\uBD84\uC740 \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : prep.isTeacherDraftJob ? "\uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 \uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615(##\xB7\uBD88\uB9BF)\uC73C\uB85C \uC774\uC5B4 \uC4F0\uC138\uC694. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : prep.isChatJob ? prep.wantsDetail ? "\uB2F5\uBCC0\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uBD88\uB9BF\xB7\uD56D\uBAA9\uBD80\uD130 \uB05D\uAE4C\uC9C0 \uC774\uC5B4 \uC4F0\uC138\uC694. \uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615 \uC720\uC9C0. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : "\uB2F5\uBCC0\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 \uC774\uC5B4 \uC4F0\uC138\uC694. ## \uD575\uC2EC\xB7## \uD560 \uC77C\uAE4C\uC9C0 \uAC1C\uC694\uD615\uC73C\uB85C **\uC644\uACB0**\uD558\uC138\uC694. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uACC4\uC18D \uC791\uC131\uD574\uC918. \uB04A\uAE34 \uC9C0\uC810\uBD80\uD130 \uC774\uC5B4\uC11C. \uB05D\uAE4C\uC9C0 \uC644\uACB0\uD574\uC918."
+            text: prep.isReportJsonJob ? "JSON \uCD9C\uB825\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 **\uC720\uD6A8\uD55C JSON\uB9CC** \uC774\uC5B4 \uC644\uC131\uD558\uC138\uC694. \uC774\uBBF8 \uCD9C\uB825\uD55C \uBD80\uBD84\uC740 \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : prep.isTeacherDraftJob ? "\uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 \uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615(##\xB7\uBD88\uB9BF)\uC73C\uB85C \uC774\uC5B4 \uC4F0\uC138\uC694. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : prep.isChatJob ? prep.wantsDetail ? "\uB2F5\uBCC0\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uBD88\uB9BF\xB7\uD56D\uBAA9\uBD80\uD130 \uB05D\uAE4C\uC9C0 \uC774\uC5B4 \uC4F0\uC138\uC694. \uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615 \uC720\uC9C0. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : "\uB2F5\uBCC0\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 **\uB9C8\uC9C0\uB9C9 \uBD88\uB9BF/\uBB38\uC7A5\uB9CC** \uC774\uC5B4 \uC644\uACB0\uD558\uC138\uC694. ## \uD575\uC2EC\xB7## \uD560 \uC77C\uC774 \uC5C6\uC73C\uBA74 \uCD94\uAC00\uD558\uACE0, \uC788\uC73C\uBA74 \uB04A\uAE34 \uBD80\uBD84\uB9CC 1~2\uBB38\uC7A5\uC73C\uB85C \uB9C8\uBB34\uB9AC\uD558\uC138\uC694. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uACC4\uC18D \uC791\uC131\uD574\uC918. \uB04A\uAE34 \uC9C0\uC810\uBD80\uD130 \uC774\uC5B4\uC11C. \uB05D\uAE4C\uC9C0 \uC644\uACB0\uD574\uC918."
           }
         ]
       }
@@ -947,11 +952,20 @@ async function runGeminiChatStreamToPush(body, env, push) {
   const pingTimer = setInterval(() => push({ event: "ping" }), proMode ? 800 : 2e3);
   let lastMsg = "AI\uAC00 \uB2F5\uBCC0\uC744 \uB9CC\uB4E4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.";
   try {
+    if (prep.isReportJsonJob || prep.isTeacherDraftJob) {
+      clearInterval(pingTimer);
+      await runGeminiChatBufferedFallback(body, env, push);
+      return;
+    }
+    const maxAttempts = prep.isServerlessDeploy ? 4 : 3;
     for (const model of prep.modelCandidatesRun) {
-      for (let attempt = 0; attempt < 2; attempt++) {
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
         if (attempt > 0) {
-          push({ event: "status", message: `\uB2E4\uC2DC \uC2DC\uB3C4 \uC911\u2026 (${attempt + 1}/2)` });
-          await new Promise((r) => setTimeout(r, 2e3));
+          push({
+            event: "status",
+            message: `\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\u2026 (${attempt + 1}/${maxAttempts})`
+          });
+          await new Promise((r) => setTimeout(r, 2500 + attempt * 1500));
         }
         try {
           const hit = await streamOneGeminiModel(prep, model, push);
@@ -961,11 +975,17 @@ async function runGeminiChatStreamToPush(body, env, push) {
             return;
           }
           lastMsg = hit.message || lastMsg;
-          const retryable = hit.status === 429 || hit.status === 503 || hit.status === 502 || /overloaded|unavailable|empty_response/i.test(lastMsg);
+          const retryable = hit.status === 429 || hit.status === 503 || hit.status === 502 || hit.status === 504 || /overloaded|unavailable|empty_response|timeout|timed out|abort/i.test(
+            lastMsg
+          );
           if (!retryable) break;
         } catch (e) {
           lastMsg = e instanceof Error ? e.message : String(e);
-          if (!/timeout|abort|503|429|overloaded/i.test(lastMsg)) break;
+          if (!/timeout|abort|503|429|504|overloaded|timed out|deadline/i.test(
+            lastMsg
+          )) {
+            break;
+          }
         }
       }
     }

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:vercel": "vercel dev",
     "dev:netlify": "cross-env VITE_SUBMISSIONS_SAME_ORIGIN=true npx -y netlify-cli@21.6.0 dev",
     "build": "vite build",
     "preview": "vite preview",
@@ -16,6 +17,8 @@
   },
   "dependencies": {
     "@netlify/blobs": "^10.1.0",
+    "@vercel/functions": "^2.0.0",
+    "@vercel/kv": "^3.0.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "jszip": "^3.10.1"

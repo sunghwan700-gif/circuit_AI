@@ -4,7 +4,7 @@
  * @param {Record<string, string | undefined>} env
  * @returns {Promise<{ ok: true, body: string } | { ok: false, statusCode: number, body: string }>}
  */
-export async function runGeminiChatProxy(body, env) {
+export async function prepareGeminiChatRequest(body, env) {
   const {
     messages,
     contextDescription,
@@ -63,9 +63,11 @@ export async function runGeminiChatProxy(body, env) {
     }
     return out.length ? out : [defaultModel]
   }
-  const isNetlify = String(env.NETLIFY || '').toLowerCase() === 'true'
+  const isServerlessDeploy =
+    String(env.NETLIFY || '').toLowerCase() === 'true' ||
+    String(env.VERCEL || '') === '1'
   const netlifyFast =
-    isNetlify && String(env.GEMINI_NETLIFY_FAST ?? '1').trim() !== '0'
+    isServerlessDeploy && String(env.GEMINI_NETLIFY_FAST ?? '1').trim() !== '0'
 
   const ctx = String(contextDescription || '')
   const isReportJob =
@@ -115,7 +117,7 @@ export async function runGeminiChatProxy(body, env) {
     modelCandidates = [...flashFirst, ...rest]
   }
   const netlifyProSafe =
-    isNetlify && useProPrimary && !isBgJob && preferFlashBody !== true
+    isServerlessDeploy && useProPrimary && !isBgJob && preferFlashBody !== true
 
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
   const defaultMaxTokens = useProPrimary
@@ -146,7 +148,7 @@ export async function runGeminiChatProxy(body, env) {
       ? 0
       : isBgJob && isChatJob
         ? 2
-        : isNetlify && isChatJob
+        : isServerlessDeploy && isChatJob
           ? 1
           : useProPrimary
             ? netlifyProSafe
@@ -167,7 +169,7 @@ export async function runGeminiChatProxy(body, env) {
   const geminiFetchTimeoutMs =
     Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5000
       ? Math.floor(fetchTimeoutParsed)
-      : isNetlify
+      : isServerlessDeploy
         ? netlifyProSafe
           ? 23_000
           : 24_000
@@ -337,6 +339,75 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       }
     }
 
+    return {
+      ok: true,
+      key,
+      systemContent,
+      contents,
+      modelCandidatesRun,
+      maxOutputTokens,
+      isChatJob,
+      geminiFetchTimeoutMs,
+      temperature: isChatJob ? 0.18 : 0.12,
+      topP: isChatJob ? 0.85 : 0.9,
+      netlifyFast,
+      netlifyProSafe,
+      primaryModel,
+      maxContinues,
+      retryDelaysMs,
+      skipRefineBody,
+      hasImages,
+      contextDescription,
+      imageList,
+      lastUserQuestion,
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return {
+      ok: false,
+      statusCode: 500,
+      body: JSON.stringify({
+        error: {
+          message: /abort|timeout|timed out/i.test(msg)
+            ? '서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
+            : msg,
+        },
+      }),
+    }
+  }
+}
+
+/**
+ * @param {object} body
+ * @param {Record<string, string | undefined>} env
+ */
+export async function runGeminiChatProxy(body, env) {
+  const prep = await prepareGeminiChatRequest(body, env)
+  if (!prep.ok) {
+    return { ok: false, statusCode: prep.statusCode, body: prep.body }
+  }
+
+  const {
+    key,
+    systemContent,
+    contents,
+    modelCandidatesRun,
+    maxOutputTokens,
+    isChatJob,
+    geminiFetchTimeoutMs,
+    netlifyFast,
+    netlifyProSafe,
+    primaryModel,
+    maxContinues,
+    retryDelaysMs,
+    skipRefineBody,
+    hasImages,
+    contextDescription,
+    imageList,
+    lastUserQuestion,
+  } = prep
+
+  try {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
     const backoffMs = retryDelaysMs
 
@@ -720,66 +791,12 @@ ${out}`
 }
 
 /**
- * NDJSON heartbeat — Netlify 게이트웨이 Inactivity Timeout 방지
+ * NDJSON 스트리밍 (Gemini streamGenerateContent + ping)
  * @param {object} body
  * @param {Record<string, string | undefined>} env
  * @param {(obj: object) => void} push
  */
 export async function runGeminiChatWithHeartbeat(body, env, push) {
-  const norm = (m) => String(m || '').replace(/^models\//, '').trim()
-  const chatModel = norm(env.GEMINI_CHAT_MODEL || env.GEMINI_MODEL || '')
-  const proMode = /pro/i.test(chatModel)
-  push({
-    event: 'status',
-    message: proMode
-      ? 'Pro 모델로 분석 중…'
-      : '회로·사진을 분석하는 중입니다…',
-  })
-  const pingMs = proMode ? 900 : 2500
-  let pingTimer = setInterval(() => push({ event: 'ping' }), pingMs)
-  try {
-    const result = await runGeminiChatProxy(body, env)
-    clearInterval(pingTimer)
-    pingTimer = null
-
-    if (result.statusCode !== 200) {
-      let msg = '요청에 실패했습니다.'
-      try {
-        const j = JSON.parse(result.body)
-        msg = j.error?.message || msg
-      } catch {
-        /* ignore */
-      }
-      push({ event: 'error', message: msg })
-      return
-    }
-
-    let text = ''
-    try {
-      text = JSON.parse(result.body).choices?.[0]?.message?.content || ''
-    } catch {
-      /* ignore */
-    }
-    if (!String(text).trim()) {
-      push({ event: 'error', message: '모델 응답이 비어 있습니다.' })
-      return
-    }
-    let modelUsed = ''
-    try {
-      modelUsed = JSON.parse(result.body).meta?.model || ''
-    } catch {
-      /* ignore */
-    }
-    push({
-      event: 'done',
-      text: String(text).trim(),
-      model: modelUsed ? String(modelUsed) : undefined,
-    })
-  } catch (e) {
-    if (pingTimer) clearInterval(pingTimer)
-    push({
-      event: 'error',
-      message: e instanceof Error ? e.message : String(e),
-    })
-  }
+  const { runGeminiChatStreamToPush } = await import('./gemini-chat-stream.mjs')
+  await runGeminiChatStreamToPush(body, env, push)
 }

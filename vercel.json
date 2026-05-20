@@ -1,0 +1,30 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "build": {
+    "env": {
+      "VITE_SUBMISSIONS_SAME_ORIGIN": "true",
+      "VITE_VERCEL_DEPLOY": "true",
+      "VITE_GEMINI_CHAT_MODEL": "gemini-2.5-pro",
+      "VITE_AI_CHAT_BACKGROUND": "false"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "functions": {
+    "api/openai/chat.js": {
+      "maxDuration": 300
+    },
+    "api/submissions/**/*.js": {
+      "maxDuration": 30
+    },
+    "api/auth/**/*.js": {
+      "maxDuration": 30
+    }
+  }
+}

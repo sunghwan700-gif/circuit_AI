@@ -8,6 +8,7 @@ import {
 } from './server/gemini-chat-core.mjs'
 import { createPendingAiChatJob, readAiChatJob } from './server/ai-chat-jobs.mjs'
 import { processAiChatJob } from './server/process-ai-chat-job.mjs'
+import { handleSubmissionsEvent } from './server/submissions-handler.mjs'
 import {
   applySubmissionEnvDefaults,
   loadEnvForMode,
@@ -98,6 +99,55 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use(async (req, res, next) => {
             const url = req.url || ''
             const pathname = url.split('?')[0] || ''
+
+            if (
+              pathname === '/api/submissions' ||
+              pathname.startsWith('/api/submissions/') ||
+              pathname === '/api/auth/teacher/login'
+            ) {
+              const buf = await readBody(req)
+              const event = {
+                httpMethod: req.method || 'GET',
+                path: pathname,
+                rawUrl: url,
+                headers: req.headers,
+                queryStringParameters: Object.fromEntries(
+                  new URL(url, 'http://localhost').searchParams.entries(),
+                ),
+                body: buf.toString('utf8'),
+              }
+              const result = await handleSubmissionsEvent(event)
+              res.statusCode = result.statusCode
+              for (const [k, v] of Object.entries(result.headers || {})) {
+                res.setHeader(k, v)
+              }
+              res.end(result.body ?? '')
+              return
+            }
+
+            if (pathname === '/api/openai/chat/background' && req.method === 'POST') {
+              const buf = await readBody(req)
+              let payload
+              try {
+                payload = JSON.parse(buf.toString('utf8') || '{}')
+              } catch {
+                res.statusCode = 400
+                res.end('')
+                return
+              }
+              const jobId = String(payload?.jobId || '').trim()
+              let requestBody = payload?.request
+              if (!requestBody) {
+                const job = await readAiChatJob(jobId)
+                requestBody = job?.request
+              }
+              if (jobId && requestBody) {
+                void processAiChatJob(jobId, requestBody, env)
+              }
+              res.statusCode = 200
+              res.end('')
+              return
+            }
 
             if (pathname === '/api/openai/chat/job') {
               if (req.method === 'GET') {

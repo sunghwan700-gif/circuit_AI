@@ -98,22 +98,26 @@ export function isRemoteSubmissionsEnabled() {
   return Boolean(getApiBase())
 }
 
-/** Netlify 리다이렉트에서 ?mode= 가 빠져 404 나는 경우를 줄이기 위해 동일 출처일 때 쿼리를 붙입니다. */
-function useNetlifySubmissionRouteHints() {
-  return import.meta.env.VITE_SUBMISSIONS_SAME_ORIGIN === 'true'
+/** Netlify 레거시: 리다이렉트 ?mode= 쿼리. Vercel 은 REST 경로만 사용 */
+function useLegacySubmissionRouteHints() {
+  return (
+    import.meta.env.VITE_SUBMISSIONS_LEGACY_QUERY === 'true' ||
+    (import.meta.env.VITE_NETLIFY_DEPLOY === 'true' &&
+      import.meta.env.VITE_VERCEL_DEPLOY !== 'true')
+  )
 }
 
 /** @param {string} base */
 function apiListSubmissionsUrl(base) {
   const b = String(base || '').replace(/\/$/, '')
-  return useNetlifySubmissionRouteHints() ? `${b}/api/submissions?mode=list` : `${b}/api/submissions`
+  return useLegacySubmissionRouteHints() ? `${b}/api/submissions?mode=list` : `${b}/api/submissions`
 }
 
 /** @param {string} base @param {string} id */
 function apiSubmissionStatusUrl(base, id) {
   const b = String(base || '').replace(/\/$/, '')
   const p = `${b}/api/submissions/${encodeURIComponent(id)}/status`
-  return useNetlifySubmissionRouteHints()
+  return useLegacySubmissionRouteHints()
     ? `${p}?mode=status&rid=${encodeURIComponent(id)}`
     : p
 }
@@ -122,7 +126,7 @@ function apiSubmissionStatusUrl(base, id) {
 function apiSubmissionRecordUrl(base, id) {
   const b = String(base || '').replace(/\/$/, '')
   const p = `${b}/api/submissions/${encodeURIComponent(id)}`
-  return useNetlifySubmissionRouteHints()
+  return useLegacySubmissionRouteHints()
     ? `${p}?mode=record&rid=${encodeURIComponent(id)}`
     : p
 }

@@ -1,20 +1,15 @@
 /**
- * AI 채팅 백그라운드 작업 (Netlify Blobs / 로컬 파일)
+ * AI 채팅 백그라운드 작업 (Vercel KV / 로컬 파일)
  */
-import * as blobs from '@netlify/blobs'
 import fs from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
+import { storeGetJson, storeSetJson } from './kv-store.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const LOCAL_JOBS_DIR = path.join(__dirname, 'data', 'ai-chat-jobs')
 const JOB_TTL_MS = 1000 * 60 * 60
-
-/** @returns {Promise<any>} */
-async function getBlobStore() {
-  return blobs.getStore({ name: 'ai-chat-jobs', consistency: 'strong' })
-}
 
 function jobKey(id) {
   return `job-${String(id).trim()}`
@@ -29,19 +24,36 @@ function normalizeJob(job) {
   return job
 }
 
+function useRemoteStore() {
+  return Boolean(
+    process.env.KV_REST_API_URL ||
+      process.env.NETLIFY === 'true' ||
+      process.env.VERCEL === '1' ||
+      Boolean(process.env.NETLIFY_BLOBS_CONTEXT),
+  )
+}
+
 /** @param {string} id */
 export async function readAiChatJob(id) {
   const key = jobKey(id)
   if (!id) return null
 
-  const useBlobs =
-    process.env.NETLIFY === 'true' ||
-    Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
-    Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
-
-  if (useBlobs) {
+  if (useRemoteStore() && process.env.KV_REST_API_URL) {
     try {
-      const store = await getBlobStore()
+      const data = await storeGetJson(key)
+      return normalizeJob(data)
+    } catch {
+      return null
+    }
+  }
+
+  if (
+    process.env.NETLIFY === 'true' ||
+    Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
+  ) {
+    try {
+      const blobs = await import('@netlify/blobs')
+      const store = blobs.getStore({ name: 'ai-chat-jobs', consistency: 'strong' })
       const data = await store.get(key, { type: 'json' })
       return normalizeJob(data)
     } catch {
@@ -69,13 +81,17 @@ export async function writeAiChatJob(id, patch) {
     updatedAt: Date.now(),
   }
 
-  const useBlobs =
-    process.env.NETLIFY === 'true' ||
-    Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME) ||
-    Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
+  if (useRemoteStore() && process.env.KV_REST_API_URL) {
+    await storeSetJson(key, next)
+    return next
+  }
 
-  if (useBlobs) {
-    const store = await getBlobStore()
+  if (
+    process.env.NETLIFY === 'true' ||
+    Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
+  ) {
+    const blobs = await import('@netlify/blobs')
+    const store = blobs.getStore({ name: 'ai-chat-jobs', consistency: 'strong' })
     await store.setJSON(key, next)
     return next
   }
@@ -109,10 +125,7 @@ export function newJobId() {
 export async function triggerAiChatBackground(baseUrl, jobId, requestBody) {
   const root = String(baseUrl || '').replace(/\/$/, '')
   const payload = JSON.stringify({ jobId, request: requestBody })
-  const urls = [
-    `${root}/.netlify/functions/openai-chat-background`,
-    `${root}/api/openai/chat/background`,
-  ]
+  const urls = [`${root}/api/openai/chat/background`]
   let lastErr = ''
   for (const url of urls) {
     try {

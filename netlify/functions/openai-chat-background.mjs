@@ -1,8 +1,6 @@
-/**
- * Netlify Background Function — Pro 채팅 (최대 ~15분)
- */
 import { readAiChatJob } from '../../server/ai-chat-jobs.mjs'
 import { processAiChatJob } from '../../server/process-ai-chat-job.mjs'
+import { deployEnv } from '../../server/deploy-env.mjs'
 
 export default async (request) => {
   let payload
@@ -26,6 +24,6 @@ export default async (request) => {
     return new Response(null, { status: 400 })
   }
 
-  await processAiChatJob(jobId, requestBody, process.env)
+  await processAiChatJob(jobId, requestBody, deployEnv())
   return new Response(null, { status: 200 })
 }

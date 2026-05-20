@@ -1,13 +1,13 @@
 /**
  * 로컬 .env → Vercel Production 환경 변수 업로드
- * 사용: npx vercel login 후
- *   node scripts/push-vercel-env.mjs
- *
- * 필요: VERCEL_TOKEN (또는 vercel login 세션)
+ * PowerShell:
+ *   $env:VERCEL_TOKEN="토큰"
+ *   npm run vercel:env
  */
 import { readFileSync, existsSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
+import { findCircuitProject, vercelApi } from './vercel-api.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const ENV_FILE = resolve(ROOT, '.env')
@@ -22,6 +22,11 @@ const KEYS = [
   'SUBMISSIONS_TEACHER_PASSWORD',
   'VITE_SUBMISSIONS_STUDENT_TOKEN',
   'VITE_GEMINI_CHAT_MODEL',
+  'KV_REST_API_URL',
+  'KV_REST_API_TOKEN',
+  'KV_REST_API_READ_ONLY_TOKEN',
+  'UPSTASH_REDIS_REST_URL',
+  'UPSTASH_REDIS_REST_TOKEN',
 ]
 
 function parseDotEnv(raw) {
@@ -44,28 +49,6 @@ function parseDotEnv(raw) {
   return out
 }
 
-async function vercelApi(path, method, body) {
-  const token = process.env.VERCEL_TOKEN
-  if (!token) {
-    throw new Error(
-      'VERCEL_TOKEN 이 없습니다. Vercel → Settings → Tokens 에서 발급 후 환경 변수로 설정하세요.',
-    )
-  }
-  const r = await fetch(`https://api.vercel.com${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  const text = await r.text()
-  if (!r.ok) {
-    throw new Error(`${method} ${path} failed (${r.status}): ${text.slice(0, 400)}`)
-  }
-  return text ? JSON.parse(text) : null
-}
-
 function loadEnvValues() {
   const parsed = existsSync(ENV_FILE)
     ? parseDotEnv(readFileSync(ENV_FILE, 'utf8'))
@@ -74,32 +57,24 @@ function loadEnvValues() {
     const fromProcess = String(process.env[key] || '').trim()
     if (fromProcess) parsed[key] = fromProcess
   }
+  if (!parsed.KV_REST_API_URL && parsed.UPSTASH_REDIS_REST_URL) {
+    parsed.KV_REST_API_URL = parsed.UPSTASH_REDIS_REST_URL
+  }
+  if (!parsed.KV_REST_API_TOKEN && parsed.UPSTASH_REDIS_REST_TOKEN) {
+    parsed.KV_REST_API_TOKEN = parsed.UPSTASH_REDIS_REST_TOKEN
+  }
   return parsed
 }
 
 async function main() {
   const parsed = loadEnvValues()
   if (!KEYS.some((k) => String(parsed[k] || '').trim())) {
-    console.error(
-      '.env 또는 환경 변수(GEMINI_API_KEY 등)에 값이 없습니다.',
-    )
+    console.error('.env 또는 환경 변수에 업로드할 값이 없습니다.')
     process.exit(1)
   }
 
-  const projects = await vercelApi('/v9/projects?limit=20', 'GET')
-  const list = projects?.projects || []
-  if (!list.length) {
-    throw new Error('Vercel 프로젝트를 찾지 못했습니다.')
-  }
-
-  const nameHint = process.env.VERCEL_PROJECT_NAME || 'circuit'
-  let project =
-    list.find((p) => /circuit/i.test(p.name || '')) ||
-    list.find((p) => /circuit-ai/i.test(p.name || '')) ||
-    list[0]
-
-  const projectId = project.id
-  console.log(`Project: ${project.name} (${projectId})`)
+  const { projectId, projectName } = await findCircuitProject()
+  console.log(`Project: ${projectName} (${projectId})`)
 
   for (const key of KEYS) {
     const value = String(parsed[key] || '').trim()
@@ -107,20 +82,16 @@ async function main() {
       console.log(`skip (empty): ${key}`)
       continue
     }
-    await vercelApi(
-      `/v10/projects/${projectId}/env?upsert=true`,
-      'POST',
-      {
-        key,
-        value,
-        type: 'encrypted',
-        target: ['production', 'preview', 'development'],
-      },
-    )
+    await vercelApi(`/v10/projects/${projectId}/env?upsert=true`, 'POST', {
+      key,
+      value,
+      type: 'encrypted',
+      target: ['production', 'preview', 'development'],
+    })
     console.log(`ok: ${key}`)
   }
 
-  console.log('\n완료. Vercel 대시보드에서 Redeploy 하세요.')
+  console.log('\n완료. npm run vercel:kv 또는 Vercel에서 Redeploy 하세요.')
 }
 
 main().catch((e) => {

@@ -10,7 +10,8 @@
     "bundle:vercel-api": "node scripts/bundle-vercel-api.mjs",
     "preview": "vite preview",
     "sync-server": "node server/submissions-server.mjs",
-    "vercel:env": "node scripts/push-vercel-env.mjs"
+    "vercel:env": "node scripts/push-vercel-env.mjs",
+    "vercel:kv": "node scripts/setup-vercel-kv.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.27.0",

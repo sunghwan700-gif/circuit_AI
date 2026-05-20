@@ -26,6 +26,12 @@ jobs:
           VITE_SUBMISSIONS_STUDENT_TOKEN: ${{ secrets.VITE_SUBMISSIONS_STUDENT_TOKEN }}
         run: node scripts/push-vercel-env.mjs
 
+      - name: Connect Vercel KV (Upstash Redis)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node scripts/setup-vercel-kv.mjs
+        continue-on-error: true
+
       - name: Trigger Vercel redeploy
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

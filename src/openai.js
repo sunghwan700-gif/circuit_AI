@@ -162,16 +162,6 @@ async function consumeNdjsonStream(body, handlers) {
   return { text: resultText.trim(), model: resultModel.trim() }
 }
 
-/** @param {string} model */
-export function formatAiModelLabel(model) {
-  const m = String(model || '').trim()
-  if (!m) return ''
-  if (/2\.5-pro/i.test(m)) return 'Gemini 2.5 Pro'
-  if (/2\.5-flash/i.test(m)) return 'Gemini 2.5 Flash (빠른 모드)'
-  if (/2\.0-flash/i.test(m)) return 'Gemini 2.0 Flash (대체 모드)'
-  return m
-}
-
 async function sendOpenAiChatStreaming(
   messages,
   contextDescription,
@@ -187,6 +177,7 @@ async function sendOpenAiChatStreaming(
     practiceContext: options?.practiceContext,
     chatGuidance: options?.chatGuidance,
     hasImages: options?.hasImages,
+    aiTask: options?.aiTask,
   }
 
   const bodyJson = JSON.stringify(body)
@@ -221,14 +212,13 @@ async function sendOpenAiChatStreaming(
   }
 
   // 서버는 스트리밍, 화면에는 완성된 답만 한 번에 표시
-  const { text, model } = await consumeNdjsonStream(res.body, {
+  const { text } = await consumeNdjsonStream(res.body, {
     onStatus: (msg) => options?.onStatus?.(msg),
   })
 
   if (!text) {
     throw new Error('AI가 빈 답변을 반환했습니다.')
   }
-  if (model) options?.onMeta?.({ model })
   return text
 }
 

@@ -1,6 +1,5 @@
 import './style.css'
 import {
-  formatAiModelLabel,
   isOpenAiProxyAvailable,
   normalizeChatFetchError,
   sendOpenAiChat,
@@ -373,19 +372,18 @@ async function generateAiReportInsights(opts = {}) {
 - T: ${swotLine(sw.t)}`
       : ''
 
-  const prompt = `너는 전기 실습을 돕는 조교야. 아래 대화, 이미지(있으면), 자기평가·SWOT 요약을 바탕으로 보고서용 결과를 생성해줘.
+  const prompt = `전기 실습 최종 보고서용 JSON을 생성합니다.
 
-요구사항:
-- 반드시 JSON만 출력
-- 키는 summary, swot 를 포함
-- summary: 한국어 1~3문장. 확인된 근거가 있을 때만 실습 피드백을 쓰고, 근거가 부족하면 "제공된 자료만으로는 구체 평가가 어렵습니다."로 시작하는 짧은 안내만.
-- swot: { "s": "...", "w": "...", "o": "...", "t": "..." } 각각 한국어 1줄(짧게). 근거가 없으면 각 값을 "추가 자료 필요"로만 채워라. SWOT 항목을 추측으로 채우지 마라.
-- 대화·이미지·자기평가·SWOT 어디에도 없는 단자번호·배선·측정값·고장 단정을 만들지 마라.
+【반드시 지킬 것】
+- 출력은 **유효한 JSON 객체 하나만**(설명·마크다운·코드펜스 없음).
+- 키: summary (문자열), swot (객체 { "s","w","o","t" }).
+- **Circuit Chatbot 대화**에 나온 실습 내용·AI가 확인한 관찰을 summary·swot에 반영하세요. 대화를 무시한 일반론·동문서답 금지.
+- 첨부 회로도·사진·자기평가·학습자 SWOT 초안과 **모순 없이** 통합하세요.
+- summary: 한국어 3~6문장. 실습에서 확인된 강점·보완·다음 점검을 구체적으로.
+- swot 각 항목: 한국어 1~2문장(완결된 문장). 대화·사진·자기평가 근거가 있을 때만 작성. 없으면 "추가 자료 필요".
+- 자료에 없는 단자번호·배선·측정값·고장 단정 금지.
 
-엄격 규칙:
-- 자료가 빈약하면(대화가 거의 없고 이미지도 없거나 판독 불가에 자기평가·SWOT도 비어 있음) summary는 한두 문장, swot 네 칸 모두 "추가 자료 필요"로 통일해도 된다.
-
-대화:
+【Circuit Chatbot 대화】
 ${transcript || '(대화 없음)'}
 
 ${practiceBlock}
@@ -395,6 +393,11 @@ ${swotCtx ? `\n${swotCtx}\n` : ''}`
     [{ role: 'user', content: prompt }],
     '최종 보고서(SWOT/종합 피드백) 생성',
     images,
+    {
+      aiTask: 'report-json',
+      hasImages: images.length > 0,
+      practiceContext: practiceBlock,
+    },
   )
 
   const parsed = tryParseJsonLoose(text)
@@ -1040,19 +1043,45 @@ SWOT S/W/O/T: ${detail.swot?.s || ''} / ${detail.swot?.w || ''} / ${detail.swot?
       msg.className = 'success-msg teacher-detail__msg'
       msg.textContent = 'AI가 초안을 작성 중입니다…'
       try {
+        /** @type {{ dataUrl: string, label?: string }[]} */
+        const teacherImages = []
+        if (detail.images?.circuit) {
+          teacherImages.push({
+            label: '제출 회로도',
+            dataUrl: detail.images.circuit,
+          })
+        }
+        const finalShot = detail.images?.final?.[0]
+        if (finalShot) {
+          teacherImages.push({
+            label: '제출 최종 결과 사진',
+            dataUrl: finalShot,
+          })
+        }
+        const teacherPractice = `제출 학습자 정보:
+- 학과·과목·이름: ${detail.student.dept || ''} / ${detail.student.subject || ''} / ${detail.student.info || ''}
+- 자기평가: ${String(detail.selfEval || '').trim() || '(없음)'}
+- SWOT(학습자 작성): S=${detail.swot?.s || ''} | W=${detail.swot?.w || ''} | O=${detail.swot?.o || ''} | T=${detail.swot?.t || ''}`
         const draft = await sendOpenAiChat(
           [
             {
               role: 'user',
               content:
-                `다음은 학습자 제출에서 확인되는 사실만이다. 제출에 없는 회로 세부·단자·측정값을 지어내지 말고, 확인된 내용만으로 교사가 학생에게 줄 짧은 피드백 초안(한국어, 3~6문장)을 작성해줘.\n\n` +
-                `근거가 매우 적으면 "제출 내용만으로는 구체 피드백이 어렵습니다"로 시작하고, 추가로 필요한 자료를 1~2문장으로만 요청해줘.\n\n` +
+                `아래 제출 자료만 근거로, 교사가 학생에게 보낼 **피드백 초안**을 작성해 주세요.\n\n` +
+                `형식: 마크다운 개요형(## 총평, ## 잘한 점, ## 보완·다음 실습, ## 안전·확인). 분량 400~900자.\n` +
+                `제출·사진에 없는 단자·배선·고장은 쓰지 마세요. SWOT·자기평가와 모순되게 쓰지 마세요.\n` +
+                `근거가 매우 적으면 ## 총평에서 "제출 내용만으로는 구체 피드백이 어렵습니다"로 시작하고 필요한 자료를 불릿으로 요청하세요.\n\n` +
                 context,
             },
           ],
           '교사용 개별 피드백 초안',
-          undefined,
-          { skipRefine: true },
+          teacherImages.length ? teacherImages : undefined,
+          {
+            skipRefine: true,
+            aiTask: 'teacher-draft',
+            hasImages: teacherImages.length > 0,
+            practiceContext: teacherPractice,
+          },
         )
         ta.value = draft
         msg.textContent = '초안을 입력란에 넣었습니다. 검토 후 저장하세요.'
@@ -1292,13 +1321,13 @@ function aiInstructionForPage(contextDescription, hasImages = true) {
 `
     : ''
 
-  return `실습 채팅 — 알짜배기 답변만.
-- 마지막 질문만. 핵심 1줄 → 근거 1~2개 → 할 일 1~2개. 보통 150~350자, 불릿 3~5개.
-- 추측 금지. (근거: …)는 꼭 필요할 때만 1회. 확인 질문은 최대 1개.
-- 「종합 분석」「전체 점검」 요청 시에만 조금 길게(불릿 6~8개).
+  return `실습 채팅 — 질문에 직접 답하는 개요형 답변.
+- 마크다운: ## 한 줄 요약 → ## 근거(불릿 2~4) → ## 지금 할 일(불릿 2~3). 안전 이슈는 맨 위 ## 안전.
+- 분량 400~800자(조금 길어도 됨). 동문서답·일반 강의 금지.
+- 추측·가상 단자번호 금지. 확인 질문은 최대 1개.
 ${sparseBlock}
 맥락: ${stage} | ${subject || '과목 미입력'} | ${contextDescription || ''}
-${hasImages ? '- 이미지: 질문과 관련된 표기·배선만 짧게. 불명확하면 "추가 사진 1장(단자 번호 보이게)" 한 줄만.' : ''}
+${hasImages ? '- 이미지: 질문과 관련된 표기·배선만. 불명확하면 추가 사진 안내 1줄.' : ''}
 `
 }
 
@@ -1418,9 +1447,9 @@ async function sendChatMessage(
     const hasImages = images.length > 0
     const messagesForAi = trimMessagesForApi(state.messages, 12)
     let statusEl = messagesEl.querySelector('.chat-pending-text')
-    let aiModel = ''
     const reply = await sendOpenAiChat(messagesForAi, contextDescription, images, {
       skipRefine: true,
+      aiTask: 'chat',
       practiceContext: buildPracticeContextForAi(),
       chatGuidance: aiInstructionForPage(contextDescription, hasImages),
       hasImages,
@@ -1430,13 +1459,8 @@ async function sendChatMessage(
         }
         if (statusEl) statusEl.textContent = msg
       },
-      onMeta: ({ model }) => {
-        aiModel = String(model || '').trim()
-      },
     })
-    const modelLabel = formatAiModelLabel(aiModel)
-    const replyWithMeta = modelLabel ? `${reply}\n\n— ${modelLabel}` : reply
-    state.messages.push({ role: 'assistant', content: replyWithMeta })
+    state.messages.push({ role: 'assistant', content: reply })
   } catch (e) {
     const msg = normalizeChatFetchError(e)
     const isQuotaError =

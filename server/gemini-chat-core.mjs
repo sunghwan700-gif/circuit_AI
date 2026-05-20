@@ -14,6 +14,7 @@ export async function prepareGeminiChatRequest(body, env) {
     chatGuidance,
     hasImages: hasImagesBody,
     preferFlash: preferFlashBody,
+    aiTask: aiTaskBody,
   } = body || {}
 
   const key = (
@@ -69,8 +70,14 @@ export async function prepareGeminiChatRequest(body, env) {
     String(env.GEMINI_SERVERLESS_COMPACT ?? '0').trim() === '1'
 
   const ctx = String(contextDescription || '')
-  const isReportJob =
-    /최종 보고서|SWOT|종합 피드백|교사용 개별 피드백 초안/i.test(ctx)
+  const aiTask = String(aiTaskBody || '').trim().toLowerCase()
+  const isTeacherDraftJob =
+    aiTask === 'teacher-draft' ||
+    /교사용 개별 피드백 초안/i.test(ctx)
+  const isReportJsonJob =
+    aiTask === 'report-json' ||
+    (/최종 보고서|SWOT|종합 피드백/i.test(ctx) && !isTeacherDraftJob)
+  const isReportJob = isReportJsonJob || isTeacherDraftJob
   const isChatJob = !isReportJob
 
   const explicitModel = normalizeModel(
@@ -143,18 +150,26 @@ export async function prepareGeminiChatRequest(body, env) {
     )
 
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
-  const defaultMaxTokens = useProPrimary
-    ? syncProTight
-      ? isChatJob
-        ? wantsDetail
-          ? 3072
-          : 2048
+  const defaultMaxTokens = isReportJsonJob
+    ? useProPrimary
+      ? 4096
+      : 3584
+    : isTeacherDraftJob
+      ? useProPrimary
+        ? 3072
         : 2560
-      : isChatJob
-        ? wantsDetail
-          ? 4096
-          : 2048
-        : 4096
+      : useProPrimary
+        ? syncProTight
+          ? isChatJob
+            ? wantsDetail
+              ? 4096
+              : 3072
+            : 2560
+          : isChatJob
+            ? wantsDetail
+              ? 4096
+              : 3072
+            : 4096
     : serverlessCompact
       ? 3584
       : 6144
@@ -173,15 +188,19 @@ export async function prepareGeminiChatRequest(body, env) {
   const maxContinues =
     syncProTight && isChatJob
       ? 0
-      : isBgJob && isChatJob
-        ? 2
-        : isChatJob
-          ? isServerlessDeploy
-            ? 3
-            : useProPrimary
+      : isReportJsonJob || isTeacherDraftJob
+        ? isServerlessDeploy
+          ? 2
+          : 3
+        : isBgJob && isChatJob
+          ? 2
+          : isChatJob
+            ? isServerlessDeploy
               ? 3
-              : 2
-          : useProPrimary
+              : useProPrimary
+                ? 3
+                : 2
+            : useProPrimary
             ? syncProTight
               ? 0
               : 3
@@ -266,22 +285,29 @@ export async function prepareGeminiChatRequest(body, env) {
 목표: 학습자가 실습 중 질문하고, 회로도·실습 사진을 근거로 정확한 피드백을 받도록 돕습니다.
 
 ${
-    isChatJob
-      ? wantsDetail
-        ? `채팅 답변(상세 목록·표·접점 번호 요청):
-- 마지막 학생 질문에만 답합니다.
-- 분량: 최대 900자. 시작한 불릿·항목은 **반드시 끝까지 완결**(중간에 ":" 뒤로 끊기면 안 됨).
-- 접점·코일·단자 번호는 **도면·사진에 보이는 표기만**. 안 보이면 "도면 확인 필요"만 쓰고 번호를 지어내지 마세요.
-- EOCR·MC·T·PB는 기기마다 표기가 다릅니다. 다른 기기 번호(예: MC의 A1-A2를 EOCR에)를 섞어 쓰지 마세요.`
-        : `채팅 답변 규칙(필수 — 알짜배기):
-- 마지막 학생 질문에만 답합니다. 이전 답·질문과 무관한 회로 전체 설명은 쓰지 않습니다.
-- 분량: 보통 전체 150~350자(한국어). 최대 500자. 불릿 3~5개 이내. 문단 2~3개 이내.
-- 구조(이 순서만, **반드시 끝까지 완결**): ① 한 줄 핵심 결론 ② 확인된 근거 1~2개 (근거: …) ③ 지금 할 일 1~2가지. 안전 이슈 있으면 맨 위 1문장만.
-- 불릿·번호·괄호를 열었으면 반드시 끝까지 쓰고 마침표로 문장을 닫을 것. 중간에 끊기지 않게.
-- 장황한 서두·배경 설명·용어 사전·중복 문장 금지. 같은 뜻 반복 금지.
-- 「종합 분석」「전체 점검」「처음부터」를 명시한 경우에만 불릿 6~8개까지 허용.
-- 1)~5) 번호 형식은 학생이 종합 분석을 요청할 때만 사용.`
-      : ''
+    isReportJsonJob
+      ? `【보고서 JSON 작업】
+- 사용자 지시대로 **유효한 JSON만** 출력합니다(설명·마크다운·\`\`\` 없음).
+- 키 summary, swot {s,w,o,t} 를 채웁니다.
+- Circuit Chatbot 대화·첨부 이미지·자기평가·학습자 SWOT 초안을 **함께 읽고** 일관된 종합 피드백을 만듭니다. 대화를 무시한 일반론·동문서답 금지.
+- 자료에 없는 단자·배선·고장 단정 금지.`
+      : isTeacherDraftJob
+        ? `【교사 피드백 초안】
+- 제출된 SWOT·자기평가·사진·실습 맥락만 근거로 학생에게 보낼 피드백 초안을 작성합니다.
+- **마크다운 개요형**(## 소제목, - 불릿). 분량 400~900자.
+- 권장 구조: ## 총평 → ## 잘한 점 → ## 보완·다음 실습 → ## 안전·확인(해당 시)
+- 제출·사진에 없는 사실은 쓰지 않습니다.`
+        : isChatJob
+          ? wantsDetail
+            ? `채팅(상세·목록·접점 요청):
+- 마지막 질문에 직접 답합니다. **마크다운 개요형**(## + 불릿). 분량 최대 1000자. 불릿·항목은 끝까지 완결.
+- 접점·단자 번호는 도면·사진 표기만. EOCR·MC·PB 번호를 섞지 마세요.`
+            : `채팅 답변 규칙:
+- 마지막 학생 질문에 **직접** 답합니다(동문서답·일반론 강의 금지).
+- **가독성**: 마크다운 개요형 — ## 한 줄 요약 → ## 근거(불릿 2~4) → ## 지금 할 일(불릿 2~3). 안전 이슈는 맨 위 ## 안전(1~2문장).
+- 분량: 400~800자(조금 길어도 됨). 불릿·괄호는 반드시 완결.
+- 장황한 서두·용어 사전·중복 금지.`
+          : ''
   }
 
 정확성(환각 방지):
@@ -295,18 +321,21 @@ ${
 안전: 감전·단락·과열 가능성이 있으면 맨 앞에 전원 차단·LOCKOUT을 안내합니다.
 
 ${
-    hasImages && !isChatJob
-      ? `이번 요청에 회로도·실습 사진이 포함될 수 있습니다.
-
-답변 형식(종합 분석 시 1~5 모두 작성):
-1) 결론 요약
-2) 관찰/근거 (도면 vs 실물 대조)
-3) 분석
-4) 점검/조치
-5) 추가 확인`
-      : hasImages && isChatJob
-        ? `첨부 이미지(회로도·실습 사진)는 마지막 학생 질문에 답할 때만 참고하세요.`
-        : `분석용 이미지가 없습니다. 가상의 회로 진단·단자 번호 추측을 쓰지 마세요. 일반 안전·필요한 사진 안내만 2~6문장으로 답하세요.`
+    isReportJsonJob
+      ? hasImages
+        ? `첨부 이미지·대화·자기평가를 교차 확인해 JSON의 summary·swot를 채우세요.`
+        : `이미지 없음: 대화·자기평가·SWOT 초안만으로 JSON을 채우세요.`
+      : isTeacherDraftJob
+        ? hasImages
+          ? `제출 회로도·결과 사진을 보고 피드백 초안에 반영하세요.`
+          : `사진 없음: 텍스트 제출(SWOT·자기평가)만 근거로 초안을 작성하세요.`
+        : hasImages && isChatJob
+          ? `첨부 이미지(회로도·실습 사진)는 마지막 학생 질문에 답할 때 참고하세요.`
+          : !hasImages && isChatJob
+            ? `분석용 이미지 없음: 단자·배선 단정 금지. 필요한 사진 안내와 일반 안전만 개요형으로 답하세요.`
+            : hasImages && !isChatJob
+              ? `이번 요청에 회로도·실습 사진이 포함될 수 있습니다.`
+              : `분석용 이미지가 없습니다. 추측 진단·단자 번호를 쓰지 마세요.`
   }
 
 현재 실습 단계: ${contextDescription || ''}
@@ -366,12 +395,19 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
         .map((img) => String(img?.label || ''))
         .filter(Boolean)
         .join(', ')
-      const qBlock = lastUserQuestion
-        ? `【이번 학생 질문 — 이것에만 답할 것】\n${lastUserQuestion}`
-        : '【이번 학생 질문】 (텍스트 없음 — 이미지 기준으로 짧게 안내)'
-      const lengthHint = wantsDetail
-        ? '상세 목록·표 요청이면 불릿을 **끝까지 완결**해 주세요(최대 900자). 접점·단자 번호는 도면 표기만, 없으면 추측 금지.'
-        : '질문에 필요한 부분만 짧게 답하세요(150~350자, 불릿 3~5개). 전체 회로 강의·장문 설명 금지.'
+      const qBlock =
+        isReportJsonJob || isTeacherDraftJob
+          ? `【작업 지시】\n${lastUserQuestion || '(지시문 참고)'}`
+          : lastUserQuestion
+            ? `【이번 학생 질문 — 이것에만 답할 것】\n${lastUserQuestion}`
+            : '【이번 학생 질문】 (텍스트 없음 — 이미지 기준으로 안내)'
+      const lengthHint = isReportJsonJob
+        ? 'JSON만 출력. 대화·사진·자기평가·SWOT 초안을 반영해 summary와 swot를 채우세요.'
+        : isTeacherDraftJob
+          ? '교사 피드백 초안을 ## 소제목·불릿 개요형(400~900자)으로 작성하세요.'
+          : wantsDetail
+            ? '상세 목록·표는 불릿을 끝까지 완결(최대 1000자). 접점 번호는 도면 표기만.'
+            : '마크다운 개요형(## 요약·근거·할 일). 400~800자. 질문에 직접 답하세요.'
       contents[lastUserIdx].parts.unshift({
         text: `${qBlock}\n\n【참고 이미지】${attachNote || '첨부됨'}\n${lengthHint}`,
       })
@@ -404,6 +440,8 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       imageList,
       lastUserQuestion,
       wantsDetail,
+      isReportJsonJob,
+      isTeacherDraftJob,
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -952,11 +990,15 @@ async function continueStreamedAnswer(prep, model, text, push) {
         role: 'user',
         parts: [
           {
-            text: prep.isChatJob
-              ? prep.wantsDetail
-                ? '방금 답변이 중간에 끊겼습니다. 끊긴 불릿·항목(콜론 뒤 내용 포함)부터 **끝까지** 이어 쓰세요. 이미 쓴 문장은 반복하지 마세요. 접점·단자 번호는 도면에 없으면 추측하지 마세요.'
-                : '방금 답변을 끊기지 않게 이어서 써줘. ② 확인된 근거와 ③ 지금 할 일을 반드시 완결해줘. 이미 쓴 문장은 반복하지 마.'
-              : '방금 답변을 이어서 계속 작성해줘. 끊긴 지점부터 이어서. 끝까지 완결해줘.',
+            text: prep.isReportJsonJob
+              ? 'JSON 출력이 끊겼습니다. 끊긴 위치부터 **유효한 JSON만** 이어 완성하세요. 이미 출력한 부분은 반복하지 마세요.'
+              : prep.isTeacherDraftJob
+                ? '교사 피드백 초안이 끊겼습니다. 끊긴 위치부터 마크다운 개요형(##·불릿)으로 이어 쓰세요. 반복하지 마세요.'
+                : prep.isChatJob
+                  ? prep.wantsDetail
+                    ? '답변이 끊겼습니다. 끊긴 불릿·항목부터 끝까지 이어 쓰세요. 마크다운 개요형 유지. 반복하지 마세요.'
+                    : '답변이 끊겼습니다. ## 근거·## 지금 할 일을 포함해 마크다운 개요형으로 이어 완결하세요. 반복하지 마세요.'
+                  : '방금 답변을 이어서 계속 작성해줘. 끊긴 지점부터 이어서. 끝까지 완결해줘.',
           },
         ],
       },

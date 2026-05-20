@@ -187,7 +187,7 @@ export async function prepareGeminiChatRequest(body, env) {
           : isChatJob
             ? wantsDetail
               ? 2048
-              : 1536
+              : 2048
             : 2048
     : serverlessCompact
       ? 3584
@@ -217,11 +217,9 @@ export async function prepareGeminiChatRequest(body, env) {
           ? 2
           : isChatJob
             ? isServerlessDeploy
-              ? proOnly
-                ? 1
-                : 2
+              ? 3
               : useProPrimary
-                ? 2
+                ? 3
                 : 2
             : useProPrimary
             ? syncProTight
@@ -761,23 +759,30 @@ export async function runGeminiChatProxy(body, env) {
       }
     }
 
+    const contFlags = {
+      isChatJob,
+      isReportJsonJob: prep.isReportJsonJob,
+      isTeacherDraftJob: prep.isTeacherDraftJob,
+    }
     for (
       let i = 0;
-      i < maxContinues && needsContinueGeneration(finishReason, out, isChatJob);
+      i < maxContinues && needsContinueForPrep(finishReason, out, contFlags);
       i++
     ) {
+      const continueUserText = prep.isReportJsonJob
+        ? 'JSON이 끊겼습니다. 끊긴 위치부터 유효한 JSON만 이어 완성하세요. 반복하지 마세요.'
+        : prep.isTeacherDraftJob
+          ? '피드백 초안이 끊겼습니다. ## 보완·## 안전까지 개요형으로 이어 완결하세요.'
+          : isChatJob
+            ? '답변이 끊겼습니다. ## 핵심·## 할 일까지 이어 완결하세요. 반복하지 마세요.'
+            : '방금 답변을 이어서 계속 작성해줘. 끊긴 지점부터 완결해줘.'
       contents.push({
         role: 'model',
         parts: [{ text: out.split('\n').slice(-40).join('\n') }],
       })
       contents.push({
         role: 'user',
-        parts: [
-          {
-            text:
-              '방금 답변을 이어서 계속 작성해줘. 이미 말한 문장은 반복하지 말고, 끊긴 지점부터 이어서. 끝까지 완결해줘.',
-          },
-        ],
+        parts: [{ text: continueUserText }],
       })
 
       const r2 = await callGemini(
@@ -792,8 +797,14 @@ export async function runGeminiChatProxy(body, env) {
       finishReason = next.finishReason || ''
     }
 
-    if (looksTruncatedText(out, false) && !isChatJob) {
-      out = `${out}\n\n(답변이 길어 여기서 끊겼을 수 있습니다. 채팅에 「이어서 작성해줘」라고 입력하면 나머지를 이어 받을 수 있습니다.)`
+    if (
+      needsContinueForPrep(finishReason, out, {
+        isChatJob,
+        isReportJsonJob: prep.isReportJsonJob,
+        isTeacherDraftJob: prep.isTeacherDraftJob,
+      })
+    ) {
+      /* 여전히 잘림 — 상위 continue 루프 한도 초과. 본문은 그대로 두고 클라이언트 재시도 유도 */
     }
 
     const refineOptOut =
@@ -881,12 +892,63 @@ ${out}`
   }
 }
 
+/** @param {string} text */
+function looksTruncatedJson(text) {
+  const t = String(text || '').trim()
+  if (!t) return true
+  const stripped = t.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()
+  try {
+    JSON.parse(stripped)
+    return false
+  } catch {
+    if (!/\}\s*$/.test(stripped)) return true
+    if ((stripped.match(/"/g) || []).length % 2 !== 0) return true
+    if (!/"swot"\s*:/i.test(stripped) && /"summary"/i.test(stripped)) return true
+    if (/"swot"\s*:\s*\{/.test(stripped) && !/"t"\s*:/i.test(stripped)) return true
+    return true
+  }
+}
+
+/** @param {string} text */
+function looksTruncatedOutline(text) {
+  const t = String(text || '').trim()
+  if (!t) return false
+
+  const headers = [...t.matchAll(/^##\s+(.+)$/gm)]
+  if (headers.length) {
+    const last = headers[headers.length - 1]
+    const after = t.slice(last.index + last[0].length).trim()
+    if (after.length < 10) return true
+
+    const has = (re) => re.test(t)
+    if (has(/##\s*요약/i) && !has(/##\s*(핵심|근거)/i) && t.length > 25) return true
+    if (has(/##\s*(핵심|근거)/i) && !has(/##\s*(할\s*일|지금)/i)) return true
+    if (has(/##\s*총평/i) && !has(/##\s*잘한/i) && t.length > 40) return true
+    if (has(/##\s*잘한/i) && !has(/##\s*보완/i) && t.length > 60) return true
+  }
+
+  const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean)
+  const lastLine = lines.length ? lines[lines.length - 1] : ''
+  if (
+    /^[-*•●]\s+\S/.test(lastLine) &&
+    lastLine.length > 4 &&
+    !/[.!?。…』」\)]\s*$/.test(lastLine)
+  ) {
+    return true
+  }
+  if (/^##\s+\S/.test(lastLine) && lastLine.length < 20) return true
+
+  return false
+}
+
 /** @param {string} text @param {boolean} [isChatJob] */
 function looksTruncatedText(text, isChatJob = false) {
   const t = String(text || '').trim()
   if (!t) return false
 
   if (isChatJob) {
+    if (looksTruncatedOutline(t)) return true
+
     const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean)
     const lastLine = lines.length ? lines[lines.length - 1] : t
 
@@ -903,7 +965,7 @@ function looksTruncatedText(text, isChatJob = false) {
     const endsMid =
       /[가-힣0-9a-zA-Z(,（·]\s*$/.test(t) &&
       !/[.!?。…』」\)]\s*$/.test(t)
-    if (endsMid && t.length >= 25) return true
+    if (endsMid && t.length >= 20) return true
     if (
       /확인된\s*근거|②|근거\s*[:：]/.test(t) &&
       !/할\s*일|③|다음\s*할|지금\s*할|해야/i.test(t)
@@ -923,6 +985,16 @@ function looksTruncatedText(text, isChatJob = false) {
     return true
   }
   return false
+}
+
+/** @param {string} [finishReason] @param {string} text @param {object} prep */
+function needsContinueForPrep(finishReason, text, prep) {
+  if (/MAX_TOKENS/i.test(String(finishReason || ''))) return true
+  if (prep?.isReportJsonJob) return looksTruncatedJson(text)
+  if (prep?.isTeacherDraftJob || prep?.isChatJob) {
+    return looksTruncatedText(text, true)
+  }
+  return looksTruncatedText(text, false)
 }
 
 /** @param {string} [finishReason] @param {string} text @param {boolean} [isChatJob] */
@@ -998,12 +1070,12 @@ async function geminiGenerateOnce(prep, model, contents) {
 
 /** @param {object} prep @param {string} model @param {string} text @param {(obj: object) => void} push */
 async function continueStreamedAnswer(prep, model, text, push) {
-  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 3)
+  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 4)
   let out = String(text || '').trim()
   let finishReason = ''
 
   for (let i = 0; i < maxRounds; i++) {
-    if (!needsContinueGeneration(finishReason, out, prep.isChatJob)) break
+    if (!needsContinueForPrep(finishReason, out, prep)) break
     push({ event: 'status', message: '답변 마무리 중…' })
     const contents = [
       ...stripInlineImagesFromContents(prep.contents),
@@ -1019,7 +1091,7 @@ async function continueStreamedAnswer(prep, model, text, push) {
                 : prep.isChatJob
                   ? prep.wantsDetail
                     ? '답변이 끊겼습니다. 끊긴 불릿·항목부터 끝까지 이어 쓰세요. 마크다운 개요형 유지. 반복하지 마세요.'
-                    : '답변이 끊겼습니다. ## 근거·## 지금 할 일을 포함해 마크다운 개요형으로 이어 완결하세요. 반복하지 마세요.'
+                    : '답변이 끊겼습니다. 끊긴 위치부터 이어 쓰세요. ## 핵심·## 할 일까지 개요형으로 **완결**하세요. 반복하지 마세요.'
                   : '방금 답변을 이어서 계속 작성해줘. 끊긴 지점부터 이어서. 끝까지 완결해줘.',
           },
         ],
@@ -1145,7 +1217,7 @@ async function streamOneGeminiModel(prep, model, push) {
   if (!streamed.text) return { ok: false, status: 502, message: 'empty_response' }
 
   let text = streamed.text
-  if (needsContinueGeneration(streamed.finishReason, text, prep.isChatJob)) {
+  if (needsContinueForPrep(streamed.finishReason, text, prep)) {
     text = await continueStreamedAnswer(prep, model, text, push)
   }
 

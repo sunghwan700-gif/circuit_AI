@@ -115,10 +115,10 @@ async function prepareGeminiChatRequest(body, env) {
 ${contextDescription}`
   );
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || "").trim());
-  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 2048 : 1792 : isTeacherDraftJob ? useProPrimary ? 1536 : 1280 : useProPrimary ? syncProTight ? isChatJob ? wantsDetail ? 2048 : 1536 : 2048 : isChatJob ? wantsDetail ? 2048 : 1536 : 2048 : serverlessCompact ? 3584 : 6144;
+  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 2048 : 1792 : isTeacherDraftJob ? useProPrimary ? 1536 : 1280 : useProPrimary ? syncProTight ? isChatJob ? wantsDetail ? 2048 : 1536 : 2048 : isChatJob ? wantsDetail ? 2048 : 2048 : 2048 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
   const modelCandidatesRun = proOnly ? modelCandidates.slice(0, 1) : serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
-  const maxContinues = syncProTight && isChatJob ? 0 : isReportJsonJob || isTeacherDraftJob ? isServerlessDeploy ? 2 : 3 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? proOnly ? 1 : 2 : useProPrimary ? 2 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
+  const maxContinues = syncProTight && isChatJob ? 0 : isReportJsonJob || isTeacherDraftJob ? isServerlessDeploy ? 2 : 3 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 3 : useProPrimary ? 3 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
   const retryDelaysMs = isBgJob ? [700, 1500, 3e3, 5e3, 8e3] : syncProTight ? [300, 700, 1200] : serverlessCompact ? [400, 900, 1800] : [250, 750, 1500, 3e3];
   const fetchTimeoutParsed = Number(String(env.GEMINI_FETCH_TIMEOUT_MS || "").trim());
   const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? syncProTight ? 23e3 : 24e3 : 12e4;
@@ -521,18 +521,20 @@ async function runGeminiChatProxy(body, env) {
         })
       };
     }
-    for (let i = 0; i < maxContinues && needsContinueGeneration(finishReason, out, isChatJob); i++) {
+    const contFlags = {
+      isChatJob,
+      isReportJsonJob: prep.isReportJsonJob,
+      isTeacherDraftJob: prep.isTeacherDraftJob
+    };
+    for (let i = 0; i < maxContinues && needsContinueForPrep(finishReason, out, contFlags); i++) {
+      const continueUserText = prep.isReportJsonJob ? "JSON\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 \uC720\uD6A8\uD55C JSON\uB9CC \uC774\uC5B4 \uC644\uC131\uD558\uC138\uC694. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : prep.isTeacherDraftJob ? "\uD53C\uB4DC\uBC31 \uCD08\uC548\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. ## \uBCF4\uC644\xB7## \uC548\uC804\uAE4C\uC9C0 \uAC1C\uC694\uD615\uC73C\uB85C \uC774\uC5B4 \uC644\uACB0\uD558\uC138\uC694." : isChatJob ? "\uB2F5\uBCC0\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. ## \uD575\uC2EC\xB7## \uD560 \uC77C\uAE4C\uC9C0 \uC774\uC5B4 \uC644\uACB0\uD558\uC138\uC694. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uACC4\uC18D \uC791\uC131\uD574\uC918. \uB04A\uAE34 \uC9C0\uC810\uBD80\uD130 \uC644\uACB0\uD574\uC918.";
       contents.push({
         role: "model",
         parts: [{ text: out.split("\n").slice(-40).join("\n") }]
       });
       contents.push({
         role: "user",
-        parts: [
-          {
-            text: "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uACC4\uC18D \uC791\uC131\uD574\uC918. \uC774\uBBF8 \uB9D0\uD55C \uBB38\uC7A5\uC740 \uBC18\uBCF5\uD558\uC9C0 \uB9D0\uACE0, \uB04A\uAE34 \uC9C0\uC810\uBD80\uD130 \uC774\uC5B4\uC11C. \uB05D\uAE4C\uC9C0 \uC644\uACB0\uD574\uC918."
-          }
-        ]
+        parts: [{ text: continueUserText }]
       });
       const r2 = await callGemini(
         usedModel || modelCandidatesRun[0],
@@ -546,10 +548,11 @@ async function runGeminiChatProxy(body, env) {
 ${chunk}`.trim();
       finishReason = next.finishReason || "";
     }
-    if (looksTruncatedText(out, false) && !isChatJob) {
-      out = `${out}
-
-(\uB2F5\uBCC0\uC774 \uAE38\uC5B4 \uC5EC\uAE30\uC11C \uB04A\uACBC\uC744 \uC218 \uC788\uC2B5\uB2C8\uB2E4. \uCC44\uD305\uC5D0 \u300C\uC774\uC5B4\uC11C \uC791\uC131\uD574\uC918\u300D\uB77C\uACE0 \uC785\uB825\uD558\uBA74 \uB098\uBA38\uC9C0\uB97C \uC774\uC5B4 \uBC1B\uC744 \uC218 \uC788\uC2B5\uB2C8\uB2E4.)`;
+    if (needsContinueForPrep(finishReason, out, {
+      isChatJob,
+      isReportJsonJob: prep.isReportJsonJob,
+      isTeacherDraftJob: prep.isTeacherDraftJob
+    })) {
     }
     const refineOptOut = String(env.GEMINI_DISABLE_REFINE || "").trim() === "1" || String(env.GEMINI_DISABLE_REFINE || "").trim().toLowerCase() === "true";
     const refineEnabled = !refineOptOut && (!serverlessCompact || String(env.GEMINI_ENABLE_REFINE || "").trim() === "1");
@@ -617,10 +620,48 @@ ${out}`;
     };
   }
 }
+function looksTruncatedJson(text) {
+  const t = String(text || "").trim();
+  if (!t) return true;
+  const stripped = t.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+  try {
+    JSON.parse(stripped);
+    return false;
+  } catch {
+    if (!/\}\s*$/.test(stripped)) return true;
+    if ((stripped.match(/"/g) || []).length % 2 !== 0) return true;
+    if (!/"swot"\s*:/i.test(stripped) && /"summary"/i.test(stripped)) return true;
+    if (/"swot"\s*:\s*\{/.test(stripped) && !/"t"\s*:/i.test(stripped)) return true;
+    return true;
+  }
+}
+function looksTruncatedOutline(text) {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  const headers = [...t.matchAll(/^##\s+(.+)$/gm)];
+  if (headers.length) {
+    const last = headers[headers.length - 1];
+    const after = t.slice(last.index + last[0].length).trim();
+    if (after.length < 10) return true;
+    const has = (re) => re.test(t);
+    if (has(/##\s*요약/i) && !has(/##\s*(핵심|근거)/i) && t.length > 25) return true;
+    if (has(/##\s*(핵심|근거)/i) && !has(/##\s*(할\s*일|지금)/i)) return true;
+    if (has(/##\s*총평/i) && !has(/##\s*잘한/i) && t.length > 40) return true;
+    if (has(/##\s*잘한/i) && !has(/##\s*보완/i) && t.length > 60) return true;
+  }
+  const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const lastLine = lines.length ? lines[lines.length - 1] : "";
+  if (/^[-*•●]\s+\S/.test(lastLine) && lastLine.length > 4 && !/[.!?。…』」\)]\s*$/.test(lastLine)) {
+    return true;
+  }
+  if (/^##\s+\S/.test(lastLine) && lastLine.length < 20) return true;
+  return false;
+}
 function looksTruncatedText(text, isChatJob = false) {
   const t = String(text || "").trim();
   if (!t) return false;
   if (isChatJob) {
+    if (looksTruncatedOutline(t)) return true;
     const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean);
     const lastLine = lines.length ? lines[lines.length - 1] : t;
     if (/[:：]\s*$/.test(lastLine) || /[:：]\s*$/.test(t)) return true;
@@ -628,7 +669,7 @@ function looksTruncatedText(text, isChatJob = false) {
       return true;
     }
     const endsMid = /[가-힣0-9a-zA-Z(,（·]\s*$/.test(t) && !/[.!?。…』」\)]\s*$/.test(t);
-    if (endsMid && t.length >= 25) return true;
+    if (endsMid && t.length >= 20) return true;
     if (/확인된\s*근거|②|근거\s*[:：]/.test(t) && !/할\s*일|③|다음\s*할|지금\s*할|해야/i.test(t)) {
       return true;
     }
@@ -641,8 +682,13 @@ function looksTruncatedText(text, isChatJob = false) {
   }
   return false;
 }
-function needsContinueGeneration(finishReason, text, isChatJob = false) {
-  return /MAX_TOKENS/i.test(String(finishReason || "")) || looksTruncatedText(text, isChatJob);
+function needsContinueForPrep(finishReason, text, prep) {
+  if (/MAX_TOKENS/i.test(String(finishReason || ""))) return true;
+  if (prep?.isReportJsonJob) return looksTruncatedJson(text);
+  if (prep?.isTeacherDraftJob || prep?.isChatJob) {
+    return looksTruncatedText(text, true);
+  }
+  return looksTruncatedText(text, false);
 }
 function stripInlineImagesFromContents(contentsArr) {
   return contentsArr.map((turn) => ({
@@ -698,11 +744,11 @@ async function geminiGenerateOnce(prep, model, contents) {
   return { ok: true, text, finishReason };
 }
 async function continueStreamedAnswer(prep, model, text, push) {
-  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 3);
+  const maxRounds = Math.min(Math.max(prep.maxContinues || 0, 0), 4);
   let out = String(text || "").trim();
   let finishReason = "";
   for (let i = 0; i < maxRounds; i++) {
-    if (!needsContinueGeneration(finishReason, out, prep.isChatJob)) break;
+    if (!needsContinueForPrep(finishReason, out, prep)) break;
     push({ event: "status", message: "\uB2F5\uBCC0 \uB9C8\uBB34\uB9AC \uC911\u2026" });
     const contents = [
       ...stripInlineImagesFromContents(prep.contents),
@@ -711,7 +757,7 @@ async function continueStreamedAnswer(prep, model, text, push) {
         role: "user",
         parts: [
           {
-            text: prep.isReportJsonJob ? "JSON \uCD9C\uB825\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 **\uC720\uD6A8\uD55C JSON\uB9CC** \uC774\uC5B4 \uC644\uC131\uD558\uC138\uC694. \uC774\uBBF8 \uCD9C\uB825\uD55C \uBD80\uBD84\uC740 \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : prep.isTeacherDraftJob ? "\uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 \uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615(##\xB7\uBD88\uB9BF)\uC73C\uB85C \uC774\uC5B4 \uC4F0\uC138\uC694. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : prep.isChatJob ? prep.wantsDetail ? "\uB2F5\uBCC0\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uBD88\uB9BF\xB7\uD56D\uBAA9\uBD80\uD130 \uB05D\uAE4C\uC9C0 \uC774\uC5B4 \uC4F0\uC138\uC694. \uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615 \uC720\uC9C0. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : "\uB2F5\uBCC0\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. ## \uADFC\uAC70\xB7## \uC9C0\uAE08 \uD560 \uC77C\uC744 \uD3EC\uD568\uD574 \uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615\uC73C\uB85C \uC774\uC5B4 \uC644\uACB0\uD558\uC138\uC694. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uACC4\uC18D \uC791\uC131\uD574\uC918. \uB04A\uAE34 \uC9C0\uC810\uBD80\uD130 \uC774\uC5B4\uC11C. \uB05D\uAE4C\uC9C0 \uC644\uACB0\uD574\uC918."
+            text: prep.isReportJsonJob ? "JSON \uCD9C\uB825\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 **\uC720\uD6A8\uD55C JSON\uB9CC** \uC774\uC5B4 \uC644\uC131\uD558\uC138\uC694. \uC774\uBBF8 \uCD9C\uB825\uD55C \uBD80\uBD84\uC740 \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : prep.isTeacherDraftJob ? "\uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 \uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615(##\xB7\uBD88\uB9BF)\uC73C\uB85C \uC774\uC5B4 \uC4F0\uC138\uC694. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : prep.isChatJob ? prep.wantsDetail ? "\uB2F5\uBCC0\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uBD88\uB9BF\xB7\uD56D\uBAA9\uBD80\uD130 \uB05D\uAE4C\uC9C0 \uC774\uC5B4 \uC4F0\uC138\uC694. \uB9C8\uD06C\uB2E4\uC6B4 \uAC1C\uC694\uD615 \uC720\uC9C0. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : "\uB2F5\uBCC0\uC774 \uB04A\uACBC\uC2B5\uB2C8\uB2E4. \uB04A\uAE34 \uC704\uCE58\uBD80\uD130 \uC774\uC5B4 \uC4F0\uC138\uC694. ## \uD575\uC2EC\xB7## \uD560 \uC77C\uAE4C\uC9C0 \uAC1C\uC694\uD615\uC73C\uB85C **\uC644\uACB0**\uD558\uC138\uC694. \uBC18\uBCF5\uD558\uC9C0 \uB9C8\uC138\uC694." : "\uBC29\uAE08 \uB2F5\uBCC0\uC744 \uC774\uC5B4\uC11C \uACC4\uC18D \uC791\uC131\uD574\uC918. \uB04A\uAE34 \uC9C0\uC810\uBD80\uD130 \uC774\uC5B4\uC11C. \uB05D\uAE4C\uC9C0 \uC644\uACB0\uD574\uC918."
           }
         ]
       }
@@ -819,7 +865,7 @@ async function streamOneGeminiModel(prep, model, push) {
   });
   if (!streamed.text) return { ok: false, status: 502, message: "empty_response" };
   let text = streamed.text;
-  if (needsContinueGeneration(streamed.finishReason, text, prep.isChatJob)) {
+  if (needsContinueForPrep(streamed.finishReason, text, prep)) {
     text = await continueStreamedAnswer(prep, model, text, push);
   }
   return { ok: true, text, model };

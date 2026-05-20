@@ -1,5 +1,5 @@
 /**
- * AI 채팅 작업 실행 (로컬·Netlify Background 공용)
+ * AI 채팅 작업 실행 (로컬·Vercel background 공용)
  */
 import { runGeminiChatProxy } from './gemini-chat-core.mjs'
 import { writeAiChatJob } from './ai-chat-jobs.mjs'
@@ -9,9 +9,9 @@ function jobEnv(baseEnv = {}) {
   return {
     ...baseEnv,
     ...process.env,
-    NETLIFY: 'true',
+    VERCEL: process.env.VERCEL ? '1' : baseEnv.VERCEL || '',
     GEMINI_BG_JOB: '1',
-    GEMINI_NETLIFY_FAST: '0',
+    GEMINI_SERVERLESS_COMPACT: '0',
     GEMINI_FETCH_TIMEOUT_MS: String(
       baseEnv.GEMINI_BG_FETCH_TIMEOUT_MS ||
         process.env.GEMINI_BG_FETCH_TIMEOUT_MS ||

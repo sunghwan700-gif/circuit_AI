@@ -1,6 +1,6 @@
 # Vercel 배포 가이드
 
-## 폴더 구조 (변경 후)
+## 폴더 구조
 
 ```
 circuit_AI/
@@ -18,12 +18,9 @@ circuit_AI/
 │   └── auth/teacher/login.js     # POST /api/auth/teacher/login
 ├── server/                       # 공용 비즈니스 로직 (배포·로컬 공유)
 │   ├── gemini-chat-core.mjs
-│   ├── ai-chat-jobs.mjs
-│   ├── process-ai-chat-job.mjs
 │   ├── submissions-handler.mjs
 │   ├── submissions-store.mjs
 │   └── kv-store.mjs
-├── netlify/                      # (레거시) Netlify Functions — 이전 호스트용
 ├── src/                          # Vite 프론트엔드
 ├── vercel.json
 └── vite.config.js
@@ -47,29 +44,24 @@ circuit_AI/
 
 `vercel.json`의 `build.env`에 `VITE_*` 일부가 이미 들어 있습니다.
 
+환경 변수 자동 업로드: `docs/SETUP-VERCEL-한번에.md` 참고.
+
 ## 로컬 개발
 
 ```bash
 npm install
-npm run dev          # Vite만: AI는 미들웨어, 제출은 sync-server(8787)
+npm run dev          # Vite: AI·제출 미들웨어, KV는 server/data/kv JSON
 npm run dev:vercel   # Vercel Dev: 배포와 동일 /api 라우트
 ```
-
-## Netlify에서 이전 시
-
-- DNS를 Vercel 프로젝트로 변경
-- Netlify 환경 변수를 Vercel에 동일하게 복사
-- **KV**로 Blobs 대체 — 기존 Netlify Blobs 데이터는 수동 이전 필요
 
 ## AI 채팅 (스트리밍)
 
 - **Gemini `streamGenerateContent`** → 서버가 NDJSON(`status` / `chunk` / `ping` / `done`)으로 전달
 - 클라이언트는 `/api/openai/chat` 한 경로만 사용 (백그라운드 폴링 없음)
-- `api/openai/chat.js` **maxDuration: 300초** (Pro 플랜 권장)
 
-| 경로 | maxDuration |
-|------|-------------|
-| `/api/openai/chat` | 300초 |
+| 경로 | maxDuration (Hobby) |
+|------|---------------------|
+| `/api/openai/chat` | 60초 |
 | `/api/submissions/*` | 30초 |
 
-Hobby 플랜은 함수 시간이 짧을 수 있어 Pro 분석에는 **Vercel Pro** 를 권장합니다.
+Pro 분석·긴 스트리밍에는 **Vercel Pro** 플랜과 `maxDuration` 상향을 권장합니다.

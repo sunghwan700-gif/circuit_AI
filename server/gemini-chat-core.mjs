@@ -1,5 +1,5 @@
 /**
- * Gemini 채팅 프록시 공용 로직 (Vite dev 미들웨어 · Netlify Function에서 동일 사용)
+ * Gemini 채팅 프록시 공용 로직 (Vite dev · Vercel api/openai/chat)
  * @param {object} body
  * @param {Record<string, string | undefined>} env
  * @returns {Promise<{ ok: true, body: string } | { ok: false, statusCode: number, body: string }>}
@@ -29,7 +29,7 @@ export async function prepareGeminiChatRequest(body, env) {
       body: JSON.stringify({
         error: {
           message:
-            '서버에 GEMINI_API_KEY(또는 GOOGLE_API_KEY)가 설정되어 있지 않습니다. 로컬은 .env, Vercel·Netlify는 환경 변수에 추가한 뒤 재배포하세요.',
+            '서버에 GEMINI_API_KEY(또는 GOOGLE_API_KEY)가 설정되어 있지 않습니다. 로컬은 .env, Vercel은 Project → Environment Variables에 추가한 뒤 재배포하세요.',
         },
       }),
     }
@@ -63,11 +63,10 @@ export async function prepareGeminiChatRequest(body, env) {
     }
     return out.length ? out : [defaultModel]
   }
-  const isServerlessDeploy =
-    String(env.NETLIFY || '').toLowerCase() === 'true' ||
-    String(env.VERCEL || '') === '1'
-  const netlifyFast =
-    isServerlessDeploy && String(env.GEMINI_NETLIFY_FAST ?? '1').trim() !== '0'
+  const isServerlessDeploy = String(env.VERCEL || '') === '1'
+  const serverlessCompact =
+    isServerlessDeploy &&
+    String(env.GEMINI_SERVERLESS_COMPACT ?? '0').trim() === '1'
 
   const ctx = String(contextDescription || '')
   const isReportJob =
@@ -103,7 +102,7 @@ export async function prepareGeminiChatRequest(body, env) {
     .map((s) => normalizeModel(s))
     .filter(Boolean)
 
-  /** Netlify 동기(26초) Pro만 축소. Background 작업(GEMINI_BG_JOB)은 제한 없음 */
+  /** Background 작업(GEMINI_BG_JOB)은 동기 한도 없음 */
   const isBgJob = String(env.GEMINI_BG_JOB || '').trim() === '1'
 
   let modelCandidates = dedupeModels([primaryModel, ...fallbackModels])
@@ -111,24 +110,28 @@ export async function prepareGeminiChatRequest(body, env) {
     const proFirst = modelCandidates.filter((m) => /pro/i.test(m))
     const rest = modelCandidates.filter((m) => !/pro/i.test(m))
     modelCandidates = [...proFirst, ...rest]
-  } else if ((isChatJob || isReportJob) && netlifyFast) {
+  } else if ((isChatJob || isReportJob) && serverlessCompact) {
     const flashFirst = modelCandidates.filter((m) => /flash/i.test(m))
     const rest = modelCandidates.filter((m) => !/flash/i.test(m))
     modelCandidates = [...flashFirst, ...rest]
   }
-  const netlifyProSafe =
-    isServerlessDeploy && useProPrimary && !isBgJob && preferFlashBody !== true
+  const syncProTight =
+    isServerlessDeploy &&
+    useProPrimary &&
+    !isBgJob &&
+    preferFlashBody !== true &&
+    String(env.GEMINI_SYNC_PRO_TIGHT ?? '0').trim() === '1'
 
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
   const defaultMaxTokens = useProPrimary
-    ? netlifyProSafe
+    ? syncProTight
       ? isChatJob
         ? 2048
         : 2560
       : isChatJob
         ? 2048
         : 4096
-    : netlifyFast
+    : serverlessCompact
       ? 3584
       : 6144
   const maxOutputTokens =
@@ -139,29 +142,29 @@ export async function prepareGeminiChatRequest(body, env) {
       : defaultMaxTokens
 
   const modelCandidatesRun =
-    netlifyFast && !isBgJob
+    serverlessCompact && !isBgJob
       ? modelCandidates.slice(0, useProPrimary ? 3 : 2)
       : modelCandidates
 
   const maxContinues =
-    netlifyProSafe && isChatJob
+    syncProTight && isChatJob
       ? 0
       : isBgJob && isChatJob
         ? 2
         : isServerlessDeploy && isChatJob
           ? 1
           : useProPrimary
-            ? netlifyProSafe
+            ? syncProTight
               ? 0
               : 3
-            : netlifyFast
+            : serverlessCompact
               ? 2
               : 4
   const retryDelaysMs = isBgJob
     ? [700, 1500, 3000, 5000, 8000]
-    : netlifyProSafe
+    : syncProTight
       ? [300, 700, 1200]
-      : netlifyFast
+      : serverlessCompact
         ? [400, 900, 1800]
         : [250, 750, 1500, 3000]
 
@@ -170,7 +173,7 @@ export async function prepareGeminiChatRequest(body, env) {
     Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5000
       ? Math.floor(fetchTimeoutParsed)
       : isServerlessDeploy
-        ? netlifyProSafe
+        ? syncProTight
           ? 23_000
           : 24_000
         : 120_000
@@ -190,7 +193,7 @@ export async function prepareGeminiChatRequest(body, env) {
     return ''
   }
 
-  if (netlifyFast && imageList.length > 4) {
+  if (serverlessCompact && imageList.length > 4) {
     return {
       ok: false,
       statusCode: 413,
@@ -208,9 +211,9 @@ export async function prepareGeminiChatRequest(body, env) {
     const m = /^data:[^;]+;base64,(.+)$/i.exec(String(img?.dataUrl || ''))
     if (m) approxImageBytes += Math.ceil((m[1].length * 3) / 4)
   }
-  const maxImageBytes = netlifyProSafe
+  const maxImageBytes = syncProTight
     ? 2_400_000
-    : netlifyFast
+    : serverlessCompact
       ? 3_200_000
       : 8_000_000
   if (approxImageBytes > maxImageBytes) {
@@ -285,7 +288,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       if (m?.role === 'user' && /^다음은 전기 실습/.test(t)) return false
       return true
     })
-    if (netlifyFast && msgList.length > 12) {
+    if (serverlessCompact && msgList.length > 12) {
       msgList = msgList.slice(-12)
     }
 
@@ -293,7 +296,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
 
     const contents = msgList.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: trimText(m.content, netlifyFast ? 2800 : 4800) }],
+      parts: [{ text: trimText(m.content, serverlessCompact ? 2800 : 4800) }],
     }))
 
     if (imageList.length) {
@@ -350,8 +353,8 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       geminiFetchTimeoutMs,
       temperature: isChatJob ? 0.18 : 0.12,
       topP: isChatJob ? 0.85 : 0.9,
-      netlifyFast,
-      netlifyProSafe,
+      serverlessCompact,
+      syncProTight,
       primaryModel,
       maxContinues,
       retryDelaysMs,
@@ -395,8 +398,8 @@ export async function runGeminiChatProxy(body, env) {
     maxOutputTokens,
     isChatJob,
     geminiFetchTimeoutMs,
-    netlifyFast,
-    netlifyProSafe,
+    serverlessCompact,
+    syncProTight,
     primaryModel,
     maxContinues,
     retryDelaysMs,
@@ -710,7 +713,7 @@ export async function runGeminiChatProxy(body, env) {
       String(env.GEMINI_DISABLE_REFINE || '').trim().toLowerCase() === 'true'
     const refineEnabled =
       !refineOptOut &&
-      (!netlifyFast || String(env.GEMINI_ENABLE_REFINE || '').trim() === '1')
+      (!serverlessCompact || String(env.GEMINI_ENABLE_REFINE || '').trim() === '1')
     const isReportJsonJob = /최종 보고서|SWOT|종합 피드백/i.test(
       String(contextDescription || ''),
     )

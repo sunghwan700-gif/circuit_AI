@@ -1,5 +1,5 @@
 /**
- * 제출·교사 세션 저장 (Vercel KV · Netlify Blobs · 로컬 파일)
+ * 제출·교사 세션 저장 (Vercel KV · 로컬 JSON)
  */
 import { storeGetJson, storeSetJson } from './kv-store.mjs'
 
@@ -25,31 +25,7 @@ function kvCompatibleStore() {
   }
 }
 
-/** @param {any} [event] Netlify Lambda event (Blobs 연결용) */
-async function netlifyBlobStore(event) {
-  const blobs = await import('@netlify/blobs')
-  if (typeof blobs.connectLambda === 'function' && event) {
-    blobs.connectLambda(event)
-  }
-  let store
-  try {
-    store = blobs.getStore({ name: 'circuit-journal-submissions' })
-  } catch {
-    store = blobs.getStore('circuit-journal-submissions')
-  }
-  return store
-}
-
-/** @param {any} [event] */
-export function openSubmissionsStore(event) {
-  if (process.env.KV_REST_API_URL) {
-    return kvCompatibleStore()
-  }
-  if (
-    process.env.NETLIFY === 'true' ||
-    Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
-  ) {
-    return netlifyBlobStore(event)
-  }
+/** @param {unknown} [_event] 레거시 시그니처 호환 */
+export function openSubmissionsStore(_event) {
   return kvCompatibleStore()
 }

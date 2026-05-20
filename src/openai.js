@@ -12,7 +12,6 @@ function getChatApiUrl() {
 function isProductionDeploy() {
   return (
     import.meta.env.VITE_VERCEL_DEPLOY === 'true' ||
-    import.meta.env.VITE_NETLIFY_DEPLOY === 'true' ||
     import.meta.env.PROD === true
   )
 }

@@ -1,5 +1,5 @@
 /**
- * 제출 동기화 API (Vercel · Netlify · 로컬 공용)
+ * 제출 동기화 API (Vercel · 로컬 공용)
  */
 import { randomUUID } from 'crypto'
 import { openSubmissionsStore, BLOB_SUBMISSIONS_KEY, BLOB_SESSIONS_KEY } from './submissions-store.mjs'
@@ -410,7 +410,6 @@ function parseRoute(event) {
     headers[a] || headers[b] || ''
   const forwarded =
     hget('x-forwarded-uri', 'X-Forwarded-Uri') ||
-    hget('x-netlify-original-uri', 'X-Netlify-Original-Uri') ||
     hget('x-invoke-path', 'X-Invoke-Path') ||
     ''
 
@@ -438,8 +437,6 @@ function parseRoute(event) {
 
     if (p === '/api/submissions' || p === '/api/submissions/') return { mode: 'list', rid: '' }
     if (p === '/api/auth/teacher/login') return { mode: 'auth', rid: '' }
-    if (p === '/.netlify/functions/submissions-sync' || p === '/.netlify/functions/submissions-sync/')
-      return { mode: 'list', rid: '' }
 
     const st = p.match(/^\/api\/submissions\/([^/]+)\/status\/?$/i)
     if (st) {

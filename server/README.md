@@ -51,11 +51,13 @@ SUBMISSIONS_TEACHERS_JSON='[
 - `PATCH /api/submissions/:id` (교사만, 담당 학과만)
 - `DELETE /api/submissions/:id` (교사만, 담당 학과만)
 
-### Netlify (별도 Node 서버 없이)
+### Vercel (별도 Node 서버 없이)
 
-이 저장소는 Netlify에 올릴 때 `netlify/functions/submissions-sync.mjs`와 Blobs로 위 API와 동일한 동작을 제공합니다. `netlify.toml`의 `VITE_SUBMISSIONS_SAME_ORIGIN`이 켜져 있으면 프런트는 `window.location.origin` 기준으로 `/api/submissions` 등을 호출합니다.
+`api/submissions/*` 와 Vercel KV(또는 로컬 `server/data/kv`)로 위 API와 동일한 동작을 제공합니다. `vercel.json`의 `VITE_SUBMISSIONS_SAME_ORIGIN`이 켜져 있으면 프런트는 `window.location.origin` 기준으로 `/api/submissions` 등을 호출합니다.
 
-Netlify **Site → Environment variables**에 `SUBMISSIONS_STUDENT_TOKEN`, `SUBMISSIONS_TEACHER_PASSWORD`(또는 `SUBMISSIONS_TEACHERS_JSON`)을 넣고, 빌드용으로 `VITE_SUBMISSIONS_STUDENT_TOKEN`을 학생 토큰과 **동일 값**으로 설정한 뒤 재배포하세요. 토큰을 비우면 개발 편의와 동일하게 제한이 없어 공개 사이트에는 부적합합니다.
+Vercel **Project → Environment Variables**에 `SUBMISSIONS_STUDENT_TOKEN`, `SUBMISSIONS_TEACHER_PASSWORD`(또는 `SUBMISSIONS_TEACHERS_JSON`)을 넣고, 빌드용으로 `VITE_SUBMISSIONS_STUDENT_TOKEN`을 학생 토큰과 **동일 값**으로 설정한 뒤 재배포하세요.
 
-로컬에서 Netlify와 동일하게(리다이렉트·Functions·Blobs) 돌려보려면 `npm run dev:netlify` 를 사용하세요. `netlify.toml`의 `[dev]`가 Vite(5173)를 띄우고, 브라우저는 보통 `http://localhost:8888` 로 접속합니다. 처음에는 `npx netlify login`과 `npx netlify link`로 배포 사이트와 연결하는 것이 좋습니다.
+로컬에서 배포와 동일하게 테스트: `npm run dev:vercel` (또는 `npm run dev` + Vite 미들웨어).
+
+자세한 배포: `docs/DEPLOY-VERCEL.md`
 

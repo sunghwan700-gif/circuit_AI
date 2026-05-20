@@ -44,7 +44,7 @@ function getTeacherApiSessionToken() {
 function getApiBase() {
   const u = import.meta.env.VITE_SUBMISSIONS_API_URL
   if (typeof u === 'string' && u.trim()) return u.replace(/\/$/, '')
-  // Netlify 등: 별도 URL 없이 같은 사이트의 Functions로 동기화
+  // Vercel 등: 별도 URL 없이 같은 출처 /api/* 로 동기화
   if (import.meta.env.VITE_SUBMISSIONS_SAME_ORIGIN === 'true') {
     if (typeof window !== 'undefined' && window.location?.origin) {
       return window.location.origin.replace(/\/$/, '')
@@ -98,13 +98,9 @@ export function isRemoteSubmissionsEnabled() {
   return Boolean(getApiBase())
 }
 
-/** Netlify 레거시: 리다이렉트 ?mode= 쿼리. Vercel 은 REST 경로만 사용 */
+/** 레거시 ?mode= 쿼리 (기본: REST 경로만 사용) */
 function useLegacySubmissionRouteHints() {
-  return (
-    import.meta.env.VITE_SUBMISSIONS_LEGACY_QUERY === 'true' ||
-    (import.meta.env.VITE_NETLIFY_DEPLOY === 'true' &&
-      import.meta.env.VITE_VERCEL_DEPLOY !== 'true')
-  )
+  return import.meta.env.VITE_SUBMISSIONS_LEGACY_QUERY === 'true'
 }
 
 /** @param {string} base */

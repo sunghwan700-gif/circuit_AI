@@ -24,13 +24,8 @@ function normalizeJob(job) {
   return job
 }
 
-function useRemoteStore() {
-  return Boolean(
-    process.env.KV_REST_API_URL ||
-      process.env.NETLIFY === 'true' ||
-      process.env.VERCEL === '1' ||
-      Boolean(process.env.NETLIFY_BLOBS_CONTEXT),
-  )
+function useRemoteKv() {
+  return Boolean(process.env.KV_REST_API_URL)
 }
 
 /** @param {string} id */
@@ -38,23 +33,9 @@ export async function readAiChatJob(id) {
   const key = jobKey(id)
   if (!id) return null
 
-  if (useRemoteStore() && process.env.KV_REST_API_URL) {
+  if (useRemoteKv()) {
     try {
       const data = await storeGetJson(key)
-      return normalizeJob(data)
-    } catch {
-      return null
-    }
-  }
-
-  if (
-    process.env.NETLIFY === 'true' ||
-    Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
-  ) {
-    try {
-      const blobs = await import('@netlify/blobs')
-      const store = blobs.getStore({ name: 'ai-chat-jobs', consistency: 'strong' })
-      const data = await store.get(key, { type: 'json' })
       return normalizeJob(data)
     } catch {
       return null
@@ -81,18 +62,8 @@ export async function writeAiChatJob(id, patch) {
     updatedAt: Date.now(),
   }
 
-  if (useRemoteStore() && process.env.KV_REST_API_URL) {
+  if (useRemoteKv()) {
     await storeSetJson(key, next)
-    return next
-  }
-
-  if (
-    process.env.NETLIFY === 'true' ||
-    Boolean(process.env.NETLIFY_BLOBS_CONTEXT)
-  ) {
-    const blobs = await import('@netlify/blobs')
-    const store = blobs.getStore({ name: 'ai-chat-jobs', consistency: 'strong' })
-    await store.setJSON(key, next)
     return next
   }
 
@@ -125,20 +96,17 @@ export function newJobId() {
 export async function triggerAiChatBackground(baseUrl, jobId, requestBody) {
   const root = String(baseUrl || '').replace(/\/$/, '')
   const payload = JSON.stringify({ jobId, request: requestBody })
-  const urls = [`${root}/api/openai/chat/background`]
-  let lastErr = ''
-  for (const url of urls) {
-    try {
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-        body: payload,
-      })
-      if (r.ok || r.status === 202) return
-      lastErr = await r.text().catch(() => '')
-    } catch (e) {
-      lastErr = e instanceof Error ? e.message : String(e)
-    }
+  const url = `${root}/api/openai/chat/background`
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: payload,
+    })
+    if (r.ok || r.status === 202) return
+    const lastErr = await r.text().catch(() => '')
+    throw new Error(lastErr || 'Background trigger failed')
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : String(e))
   }
-  throw new Error(lastErr || 'Background trigger failed')
 }

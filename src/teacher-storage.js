@@ -31,6 +31,8 @@ function getTeacherApiSessionToken() {
  *   hasFinal: boolean
  *   selfEval: string
  *   swot: Swot
+ *   aiSummary?: string
+ *   chatTranscript?: string
  *   learningMinutes: number | null
  *   images: { circuit?: string, final?: string[], process?: string[] }
  *   teacherFeedback?: string
@@ -382,6 +384,45 @@ export function setLastSeenCount(n) {
  * @param {number} [quality]
  * @returns {Promise<string>}
  */
+/**
+ * @param {string} dataUrl
+ * @param {number} [maxW]
+ * @param {number} [quality]
+ */
+export function compressDataUrlJpeg(dataUrl, maxW = 960, quality = 0.72) {
+  const src = String(dataUrl || '').trim()
+  if (!src || !/^data:image\//i.test(src)) {
+    return Promise.resolve('')
+  }
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      let w = img.naturalWidth || img.width
+      let h = img.naturalHeight || img.height
+      if (w > maxW) {
+        h = (h * maxW) / w
+        w = maxW
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(w))
+      canvas.height = Math.max(1, Math.round(h))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('canvas를 사용할 수 없습니다.'))
+        return
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      const q =
+        typeof quality === 'number' && Number.isFinite(quality)
+          ? Math.max(0.5, Math.min(0.92, quality))
+          : 0.72
+      resolve(canvas.toDataURL('image/jpeg', q))
+    }
+    img.onerror = () => reject(new Error('이미지를 읽지 못했습니다.'))
+    img.src = src
+  })
+}
+
 export function fileToCompressedJpegDataUrl(file, maxW = 1200, quality = 0.72) {
   return new Promise((resolve, reject) => {
     const img = new Image()

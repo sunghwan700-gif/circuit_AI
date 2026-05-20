@@ -9,6 +9,7 @@ import {
 } from './journal-hwpx.js'
 import { buildJournalPdfElement, saveElementAsPdf } from './journal-pdf.js'
 import {
+  compressDataUrlJpeg,
   fileToCompressedJpegDataUrl,
   fetchRemoteFeedbackStatus,
   getLastSeenCount,
@@ -142,7 +143,7 @@ const state = {
     finalPreviewUrls: [],
     selfEval: '',
   },
-  /** @type {{ swot: { s: string, w: string, o: string, t: string }, selfEval: string } | null} */
+  /** @type {{ swot: { s: string, w: string, o: string, t: string }, selfEval: string, aiSummary?: string } | null} */
   journalSnapshot: null,
   messages: [],
 }
@@ -312,6 +313,70 @@ function buildChatTranscriptForReport() {
   return joined.length > 6000 ? joined.slice(joined.length - 6000) : joined
 }
 
+function hasMeaningfulChatForReport() {
+  const msgs = Array.isArray(state.messages) ? state.messages : []
+  return msgs.some((m) => {
+    if (m.role !== 'user') return false
+    const t = String(m.content || '').trim()
+    return t.length >= 6 && !/^다음은 전기 실습/.test(t)
+  })
+}
+
+function describeUploadedMaterialsForAi() {
+  const d = state.data || {}
+  const parts = []
+  if (d.circuitImg || d.circuitPreviewUrl) parts.push('회로도 1장')
+  const proc = d.processPreviewUrls?.length ?? d.processImgs?.length ?? 0
+  const fin = d.finalPreviewUrls?.length ?? d.finalImgs?.length ?? 0
+  if (proc) parts.push(`진행 사진 ${proc}장`)
+  if (fin) parts.push(`최종 사진 ${fin}장`)
+  if (!parts.length) {
+    return '실습 사진·회로도 미업로드. Circuit Chatbot 대화·자기평가만 근거로 작성하고, 사진 없이 배선·실물 상태를 단정하지 마세요.'
+  }
+  return `업로드: ${parts.join(', ')}. 대화 내용과 함께 반영하세요.`
+}
+
+function buildTeacherDraftContext(detail) {
+  const lines = [
+    `학습자: ${detail.student.info}, 학과: ${detail.student.dept}, 과목: ${detail.student.subject}`,
+    `자기평가: ${String(detail.selfEval || '').trim() || '(없음)'}`,
+    `SWOT(제출): S=${detail.swot?.s || '(없음)'} | W=${detail.swot?.w || '(없음)'} | O=${detail.swot?.o || '(없음)'} | T=${detail.swot?.t || '(없음)'}`,
+  ]
+  const summary = String(detail.aiSummary || '').trim()
+  if (summary) {
+    lines.push(`\n【AI 종합 피드백(학습자 보고서)】\n${summary}`)
+  }
+  const chat = String(detail.chatTranscript || '').trim()
+  if (chat) {
+    lines.push(`\n【Circuit Chatbot 대화(학습자 실습 중 질문·AI 답)】\n${chat}`)
+  }
+  return lines.join('\n')
+}
+
+/** @param {import('./teacher-storage.js').SubmissionRecord} detail */
+async function buildTeacherApiImages(detail) {
+  /** @type {{ dataUrl: string, label?: string }[]} */
+  const images = []
+  if (detail.images?.circuit) {
+    try {
+      const dataUrl = await compressDataUrlJpeg(detail.images.circuit, 960, 0.72)
+      if (dataUrl) images.push({ label: '제출 회로도', dataUrl })
+    } catch {
+      /* ignore */
+    }
+  }
+  const finalShot = detail.images?.final?.[0]
+  if (finalShot) {
+    try {
+      const dataUrl = await compressDataUrlJpeg(finalShot, 880, 0.7)
+      if (dataUrl) images.push({ label: '제출 최종 결과', dataUrl })
+    } catch {
+      /* ignore */
+    }
+  }
+  return images
+}
+
 function tryParseJsonLoose(s) {
   const raw = String(s || '').trim()
   if (!raw) return null
@@ -341,15 +406,33 @@ function tryParseJsonLoose(s) {
 async function buildAiImagesForReport() {
   /** @type {{ dataUrl: string, label?: string }[]} */
   const images = []
+  const tight = isDeployTight()
   if (state.data.circuitImg) {
     images.push({
       label: '회로도',
       dataUrl: await fileToCompressedJpegDataUrl(
         state.data.circuitImg,
-        isDeployTight() ? 1280 : 1600,
-        isDeployTight() ? 0.78 : 0.85,
+        tight ? 1280 : 1600,
+        tight ? 0.78 : 0.85,
       ),
     })
+  }
+  if (state.data.finalImgs?.length) {
+    const f = state.data.finalImgs[state.data.finalImgs.length - 1]
+    if (f) {
+      images.push({
+        label: '최종 결과(1장)',
+        dataUrl: await fileToCompressedJpegDataUrl(f, tight ? 1120 : 1400, 0.76),
+      })
+    }
+  } else if (state.data.processImgs?.length) {
+    const f = state.data.processImgs[state.data.processImgs.length - 1]
+    if (f) {
+      images.push({
+        label: '실습 진행(1장)',
+        dataUrl: await fileToCompressedJpegDataUrl(f, tight ? 1120 : 1400, 0.76),
+      })
+    }
   }
   return images
 }
@@ -379,19 +462,27 @@ async function generateAiReportInsights(opts = {}) {
 - T: ${swotLine(sw.t)}`
       : ''
 
+  const materialNote = describeUploadedMaterialsForAi()
+  const chatNote =
+    transcript && transcript !== '(대화 없음)'
+      ? ''
+      : '\n(대화 없음 — summary·swot는 자기평가·업로드 자료만으로 작성, 추측 금지)'
+
   const prompt = `전기 실습 최종 보고서용 JSON을 생성합니다.
+
+【자료 상태】${materialNote}
 
 【반드시 지킬 것】
 - 출력은 **유효한 JSON 객체 하나만**(설명·마크다운·코드펜스 없음).
 - 키: summary (문자열), swot (객체 { "s","w","o","t" }).
-- **Circuit Chatbot 대화**에 나온 실습 내용·AI가 확인한 관찰을 summary·swot에 반영하세요. 대화를 무시한 일반론·동문서답 금지.
-- 첨부 회로도·사진·자기평가·학습자 SWOT 초안과 **모순 없이** 통합하세요.
-- summary: 한국어 3~5문장. 실습 강점·보완·다음 점검을 구체적으로(너무 짧지 않게).
-- swot 각 항목: 한국어 1~2문장. 대화·사진·자기평가 근거가 있을 때만. 없으면 "추가 자료 필요".
-- 자료에 없는 단자번호·배선·측정값·고장 단정 금지.
+- **Circuit Chatbot 대화**의 질문·AI 답변을 summary·swot의 **주요 근거**로 사용하세요. 대화를 무시한 일반론·동문서답 금지.
+- 자기평가·업로드 사진(있을 때만)·학습자 SWOT 초안과 모순 없이 통합하세요.
+- summary: 한국어 3~5문장. 대화에서 확인된 실습 내용·강점·보완·다음 점검.
+- swot 각 항목: 한국어 1~2문장. 대화·사진·자기평가에 근거가 있을 때만. 근거 없으면 "추가 자료 필요".
+- 자료에 없는 단자번호·배선·고장 단정 금지.
 
 【Circuit Chatbot 대화】
-${transcript || '(대화 없음)'}
+${transcript || '(대화 없음)'}${chatNote}
 
 ${practiceBlock}
 ${swotCtx ? `\n${swotCtx}\n` : ''}`
@@ -708,6 +799,8 @@ async function buildSubmissionRecordFromState() {
     hasFinal: (d.finalImgs?.length ?? 0) > 0,
     selfEval: d.selfEval?.trim() ?? '',
     swot,
+    aiSummary: String(snap?.aiSummary || '').trim(),
+    chatTranscript: buildChatTranscriptForReport(),
     learningMinutes: computeLearningMinutes(),
     images,
   }
@@ -998,12 +1091,20 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
         <div class="teacher-swot">
           <h3>SWOT (제출 시점)</h3>
           <ul class="teacher-swot__list ai-output">
-            <li><strong>S</strong> ${escapeHtml(detail.swot?.s || '')}</li>
-            <li><strong>W</strong> ${escapeHtml(detail.swot?.w || '')}</li>
-            <li><strong>O</strong> ${escapeHtml(detail.swot?.o || '')}</li>
-            <li><strong>T</strong> ${escapeHtml(detail.swot?.t || '')}</li>
+            <li><strong>S</strong> ${escapeHtml(detail.swot?.s || '(없음)')}</li>
+            <li><strong>W</strong> ${escapeHtml(detail.swot?.w || '(없음)')}</li>
+            <li><strong>O</strong> ${escapeHtml(detail.swot?.o || '(없음)')}</li>
+            <li><strong>T</strong> ${escapeHtml(detail.swot?.t || '(없음)')}</li>
           </ul>
         </div>
+        <label class="field field--block">
+          <span class="field__label">AI 종합 피드백 (학습자 보고서)</span>
+          <div class="teacher-readonly teacher-readonly--ai">${escapeHtml(detail.aiSummary?.trim() || '(학습자가 「최종 실습일지 생성」 전이거나 미생성)')}</div>
+        </label>
+        <label class="field field--block">
+          <span class="field__label">Circuit Chatbot 대화 요약</span>
+          <div class="teacher-readonly teacher-readonly--chat">${escapeHtml(detail.chatTranscript?.trim() ? (detail.chatTranscript.length > 1200 ? detail.chatTranscript.slice(-1200) : detail.chatTranscript) : '(대화 기록 없음)')}</div>
+        </label>
         <label class="field field--block">
           <span class="field__label">자기평가</span>
           <div class="teacher-readonly">${escapeHtml(detail.selfEval || '(없음)')}</div>
@@ -1050,9 +1151,14 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
       if (!(ta instanceof HTMLTextAreaElement) || !msg) return
       msg.hidden = false
       const useApi = isOpenAiProxyAvailable()
-      const context = `학습자: ${detail.student.info}, 학과: ${detail.student.dept}, 과목: ${detail.student.subject}
-SWOT S/W/O/T: ${detail.swot?.s || ''} / ${detail.swot?.w || ''} / ${detail.swot?.o || ''} / ${detail.swot?.t || ''}
-자기평가: ${detail.selfEval || ''}`
+      const context = buildTeacherDraftContext(detail)
+      const hasTeacherSource =
+        Boolean(String(detail.aiSummary || '').trim()) ||
+        Boolean(String(detail.chatTranscript || '').trim()) ||
+        Boolean(String(detail.selfEval || '').trim()) ||
+        [detail.swot?.s, detail.swot?.w, detail.swot?.o, detail.swot?.t].some((x) =>
+          String(x || '').trim(),
+        )
       if (!useApi) {
         msg.className = 'info-banner teacher-detail__msg'
         msg.textContent =
@@ -1063,60 +1169,55 @@ SWOT S/W/O/T: ${detail.swot?.s || ''} / ${detail.swot?.w || ''} / ${detail.swot?
           `- 안전: 작업 전 전원 확인·배선 재점검을 한 문장으로 안내`
         return
       }
+      if (!hasTeacherSource) {
+        msg.className = 'info-banner teacher-detail__msg'
+        msg.textContent =
+          '학습자가 「최종 실습일지 생성」을 하지 않았거나 채팅·SWOT이 비어 있습니다. 학습자에게 2~4단계 채팅 후 실습일지 생성을 요청해 주세요.'
+        return
+      }
       aiBtn.disabled = true
       msg.className = 'success-msg teacher-detail__msg'
       msg.textContent = 'AI가 초안을 작성 중입니다…'
+      const draftPrompt =
+        `아래는 **한 학습자의 제출 자료 전체**입니다(대화·종합 피드백·SWOT·자기평가). 이 내용만 근거로 교사가 학생에게 보낼 **피드백 초안**을 작성하세요.\n\n` +
+        `형식: ## 총평(2~3문장) → ## 잘한 점(불릿 2~3) → ## 보완·다음 실습(불릿 2~3) → ## 안전(해당 시). **400~650자**, 한 번에 완결.\n` +
+        `Circuit Chatbot 대화·AI 종합 피드백을 반드시 반영하세요. 제출에 없는 사실·단자 번호는 쓰지 마세요.\n\n` +
+        context
+      const teacherPractice = `제출 학습자: ${detail.student.dept || ''} / ${detail.student.subject || ''} / ${detail.student.info || ''}`
+      const draftOpts = {
+        skipRefine: true,
+        aiTask: 'teacher-draft',
+        practiceContext: teacherPractice,
+        maxAttempts: 4,
+      }
       try {
-        /** @type {{ dataUrl: string, label?: string }[]} */
-        const teacherImages = []
-        if (detail.images?.circuit) {
-          teacherImages.push({
-            label: '제출 회로도',
-            dataUrl: detail.images.circuit,
-          })
+        let draft = ''
+        try {
+          draft = await sendOpenAiChat(
+            [{ role: 'user', content: draftPrompt }],
+            '교사용 개별 피드백 초안',
+            undefined,
+            { ...draftOpts, hasImages: false },
+          )
+        } catch (textErr) {
+          const teacherImages = await buildTeacherApiImages(detail)
+          if (!teacherImages.length) throw textErr
+          msg.textContent = '사진을 포함해 다시 생성 중입니다…'
+          draft = await sendOpenAiChat(
+            [{ role: 'user', content: draftPrompt }],
+            '교사용 개별 피드백 초안',
+            teacherImages,
+            { ...draftOpts, hasImages: true },
+          )
         }
-        const finalShot = detail.images?.final?.[0]
-        if (finalShot) {
-          teacherImages.push({
-            label: '제출 최종 결과 사진',
-            dataUrl: finalShot,
-          })
-        }
-        const teacherPractice = `제출 학습자 정보:
-- 학과·과목·이름: ${detail.student.dept || ''} / ${detail.student.subject || ''} / ${detail.student.info || ''}
-- 자기평가: ${String(detail.selfEval || '').trim() || '(없음)'}
-- SWOT(학습자 작성): S=${detail.swot?.s || ''} | W=${detail.swot?.w || ''} | O=${detail.swot?.o || ''} | T=${detail.swot?.t || ''}`
-        const draft = await sendOpenAiChat(
-          [
-            {
-              role: 'user',
-              content:
-                `아래 제출 자료만 근거로, 교사가 학생에게 보낼 **피드백 초안**을 작성해 주세요.\n\n` +
-                `형식: ## 총평(2~3문장) → ## 잘한 점(불릿 2~3) → ## 보완·다음 실습(불릿 2~3) → ## 안전(해당 시). **400~650자**, 한 번에 완결.\n` +
-                `제출·사진에 없는 단자·배선·고장은 쓰지 마세요. SWOT·자기평가와 모순되게 쓰지 마세요.\n` +
-                `근거가 매우 적으면 ## 총평에서 "제출 내용만으로는 구체 피드백이 어렵습니다"로 시작하고 필요한 자료를 불릿으로 요청하세요.\n\n` +
-                context,
-            },
-          ],
-          '교사용 개별 피드백 초안',
-          teacherImages.length ? teacherImages : undefined,
-          {
-            skipRefine: true,
-            aiTask: 'teacher-draft',
-            hasImages: teacherImages.length > 0,
-            practiceContext: teacherPractice,
-          },
-        )
         ta.value = draft
+        msg.className = 'success-msg teacher-detail__msg'
         msg.textContent = '초안을 입력란에 넣었습니다. 검토 후 저장하세요.'
       } catch (e) {
         msg.className = 'info-banner teacher-detail__msg'
         msg.textContent =
-          e instanceof Error ? e.message : 'AI 요청에 실패했습니다.'
-        // API 오류 시에도 교사가 바로 수정할 수 있도록 모의 초안을 넣는다.
-        ta.value =
-          `[모의 초안] API 오류로 자동 생성에 실패했습니다. 아래는 형식용 문장이며 실제 관찰에 기반하지 않을 수 있습니다.\n` +
-          `제출된 SWOT·자기평가·사진을 다시 확인한 뒤 직접 피드백을 작성해 주세요.`
+          (e instanceof Error ? normalizeChatFetchError(e) : String(e)) +
+          ' (잠시 뒤 다시 시도하거나, 학습자에게 채팅·「최종 실습일지 생성」 후 재제출을 요청하세요.)'
       } finally {
         aiBtn.disabled = false
       }
@@ -2029,7 +2130,7 @@ function render() {
             })()}</dd></div>
             <div class="stat-list__row"><dt>이미지 업로드</dt><dd>${totalUploadedImageCount()}장</dd></div>
           </dl>
-          <div class="info-banner info-banner--soft ai-summary-banner ai-output">${escapeHtml(aiSummary || 'AI 종합 피드백은 「최종 실습일지 생성」을 누르면 자동으로 채워집니다.')}</div>
+          <div class="info-banner info-banner--soft ai-summary-banner ai-output">${escapeHtml(aiSummary || '2~4단계 Circuit Chatbot 대화 후 「최종 실습일지 생성」을 누르면, 채팅 내용이 반영된 종합 피드백이 채워집니다.')}</div>
           <hr class="divider" />
           <div class="report-self-eval">
             <h3 class="report-card__subtitle">자기평가</h3>
@@ -2110,11 +2211,18 @@ function render() {
         Boolean(normalizeSwot(swot?.t))
       const selfEvalHasAny = Boolean(String(state.data.selfEval || '').trim())
       const uploads = totalUploadedImageCount()
-      if (!swotHasAny && !selfEvalHasAny && uploads === 0) {
+      const chatOk = hasMeaningfulChatForReport()
+      if (!swotHasAny && !selfEvalHasAny && uploads === 0 && !chatOk) {
         state.journalSnapshot = null
         msg.className = 'info-banner'
         msg.textContent =
-          '아직 입력된 내용이 없습니다. 회로도/사진을 업로드하거나 자기평가를 입력한 뒤 「최종 실습일지 생성」을 눌러 주세요.'
+          '아직 입력된 내용이 없습니다. 2~4단계에서 Circuit Chatbot으로 질문하거나, 회로도·자기평가를 입력한 뒤 「최종 실습일지 생성」을 눌러 주세요.'
+        return
+      }
+      if (!chatOk && uploads === 0) {
+        msg.className = 'info-banner'
+        msg.textContent =
+          'Circuit Chatbot 대화가 없습니다. 2~3단계에서 실습 질문을 한 뒤 다시 시도하거나, 회로도를 1장 업로드해 주세요.'
         return
       }
 
@@ -2144,7 +2252,11 @@ function render() {
       setSwot('o', swot?.o || '')
       setSwot('t', swot?.t || '')
       const banner = root.querySelector('.ai-summary-banner')
-      if (banner && aiSummaryText) banner.textContent = aiSummaryText
+      if (banner) {
+        banner.textContent =
+          aiSummaryText ||
+          '종합 피드백을 생성하지 못했습니다. 채팅 내용을 확인한 뒤 다시 시도해 주세요.'
+      }
 
       state.journalSnapshot = {
         swot,
@@ -2238,6 +2350,12 @@ function render() {
       const msg = root.querySelector('.submit-teacher-msg')
       if (!msg) return
       msg.hidden = false
+      if (!state.journalSnapshot) {
+        msg.className = 'info-banner submit-teacher-msg'
+        msg.textContent =
+          '먼저 「최종 실습일지 생성」을 실행해 SWOT·종합 피드백을 만든 뒤 교사 Dashboard에 제출해 주세요.'
+        return
+      }
       msg.className = 'success-msg submit-teacher-msg'
       msg.textContent = '이미지를 압축해 제출하는 중입니다…'
       try {

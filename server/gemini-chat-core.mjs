@@ -176,7 +176,7 @@ export async function prepareGeminiChatRequest(body, env) {
       ? 4096
       : 3072
     : isTeacherDraftJob
-      ? 768
+      ? 1024
       : useProPrimary
         ? syncProTight
           ? isChatJob
@@ -552,13 +552,7 @@ export async function runGeminiChatProxy(body, env) {
           '',
       ).trim()
       const parts = data.candidates?.[0]?.content?.parts
-      const text = Array.isArray(parts)
-        ? parts
-            .filter((p) => p && p.thought !== true)
-            .map((p) => (typeof p?.text === 'string' ? p.text : ''))
-            .join('')
-            .trim()
-        : ''
+      const text = joinGeminiPartsText(parts)
       const finishReason = String(data.candidates?.[0]?.finishReason || '').trim()
       const blocked =
         !!blockReason ||
@@ -589,11 +583,14 @@ export async function runGeminiChatProxy(body, env) {
             parts: [{ text: systemContent }],
           },
           contents: contentsToSend,
-            generationConfig: {
+          generationConfig: buildGenerationConfig(
+            {
               temperature: isChatJob ? 0.12 : 0.12,
               topP: isChatJob ? 0.85 : 0.9,
               maxOutputTokens,
             },
+            model,
+          ),
         }),
         signal: AbortSignal.timeout(geminiFetchTimeoutMs),
       }
@@ -1034,6 +1031,40 @@ function stripInlineImagesFromContents(contentsArr) {
   }))
 }
 
+/** @param {object[] | undefined} parts */
+function joinGeminiPartsText(parts) {
+  if (!Array.isArray(parts)) return ''
+  const visible = parts
+    .filter((p) => p && p.thought !== true)
+    .map((p) => (typeof p?.text === 'string' ? p.text : ''))
+    .join('')
+    .trim()
+  if (visible) return visible
+  return parts
+    .map((p) => (typeof p?.text === 'string' ? p.text : ''))
+    .join('')
+    .trim()
+}
+
+/**
+ * Gemini 2.5 Flash: thinking tokens count toward maxOutputTokens → visible text empty.
+ * @param {object} prep
+ * @param {string} model
+ */
+function buildGenerationConfig(prep, model) {
+  const m = String(model || '')
+  /** @type {Record<string, unknown>} */
+  const cfg = {
+    temperature: prep.temperature,
+    topP: prep.topP,
+    maxOutputTokens: prep.maxOutputTokens,
+  }
+  if (/gemini-2\.5/i.test(m) && /flash/i.test(m) && !/pro/i.test(m)) {
+    cfg.thinkingConfig = { thinkingBudget: 0 }
+  }
+  return cfg
+}
+
 /** @param {object} prep @param {string} model @param {object[]} contents */
 async function geminiGenerateOnce(prep, model, contents) {
   const res = await fetch(
@@ -1052,11 +1083,7 @@ async function geminiGenerateOnce(prep, model, contents) {
           parts: [{ text: prep.systemContent }],
         },
         contents,
-        generationConfig: {
-          temperature: prep.temperature,
-          topP: prep.topP,
-          maxOutputTokens: prep.maxOutputTokens,
-        },
+        generationConfig: buildGenerationConfig(prep, model),
       }),
       signal: AbortSignal.timeout(prep.geminiFetchTimeoutMs),
     },
@@ -1078,13 +1105,7 @@ async function geminiGenerateOnce(prep, model, contents) {
     return { ok: false, status: 502, message: 'invalid_json' }
   }
   const parts = data.candidates?.[0]?.content?.parts
-  const text = Array.isArray(parts)
-    ? parts
-        .filter((p) => p && p.thought !== true)
-        .map((p) => (typeof p?.text === 'string' ? p.text : ''))
-        .join('')
-        .trim()
-    : ''
+  const text = joinGeminiPartsText(parts)
   const finishReason = String(data.candidates?.[0]?.finishReason || '').trim()
   if (!text) return { ok: false, status: 502, message: 'empty_response' }
   return { ok: true, text, finishReason }
@@ -1143,12 +1164,7 @@ const continueStreamedAnswer = finalizeGeminiAnswer
 
 /** @param {unknown} obj */
 function extractStreamChunkText(obj) {
-  const parts = obj?.candidates?.[0]?.content?.parts
-  if (!Array.isArray(parts)) return ''
-  return parts
-    .filter((p) => p && p.thought !== true)
-    .map((p) => (typeof p?.text === 'string' ? p.text : ''))
-    .join('')
+  return joinGeminiPartsText(obj?.candidates?.[0]?.content?.parts)
 }
 
 async function consumeGeminiSseStream(body, onText) {
@@ -1238,11 +1254,7 @@ async function streamOneGeminiModel(prep, model, push) {
         parts: [{ text: prep.systemContent }],
       },
       contents: prep.contents,
-      generationConfig: {
-        temperature: prep.temperature,
-        topP: prep.topP,
-        maxOutputTokens: prep.maxOutputTokens,
-      },
+      generationConfig: buildGenerationConfig(prep, model),
     }),
     signal: AbortSignal.timeout(prep.geminiFetchTimeoutMs),
   })

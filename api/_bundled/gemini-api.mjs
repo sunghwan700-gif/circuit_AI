@@ -116,7 +116,7 @@ async function prepareGeminiChatRequest(body, env) {
 ${contextDescription}`
   );
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || "").trim());
-  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? 768 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
+  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? 1024 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
   const modelCandidatesRun = proOnly ? modelCandidates.slice(0, 1) : serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
   const maxContinues = syncProTight && isChatJob ? 0 : isTeacherDraftJob ? 0 : isReportJsonJob ? isServerlessDeploy ? 3 : 4 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 2 : useProPrimary ? 4 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
@@ -352,7 +352,7 @@ async function runGeminiChatProxy(body, env) {
         data.promptFeedback?.blockReason || data.candidates?.[0]?.finishMessage || ""
       ).trim();
       const parts = data.candidates?.[0]?.content?.parts;
-      const text = Array.isArray(parts) ? parts.filter((p) => p && p.thought !== true).map((p) => typeof p?.text === "string" ? p.text : "").join("").trim() : "";
+      const text = joinGeminiPartsText(parts);
       const finishReason2 = String(data.candidates?.[0]?.finishReason || "").trim();
       const blocked = !!blockReason || finishReason2 === "SAFETY" || finishReason2 === "RECITATION" || !text && !data.candidates?.length;
       return { text, finishReason: finishReason2, blocked, blockReason };
@@ -376,11 +376,14 @@ async function runGeminiChatProxy(body, env) {
             parts: [{ text: systemContent }]
           },
           contents: contentsToSend,
-          generationConfig: {
-            temperature: isChatJob ? 0.12 : 0.12,
-            topP: isChatJob ? 0.85 : 0.9,
-            maxOutputTokens
-          }
+          generationConfig: buildGenerationConfig(
+            {
+              temperature: isChatJob ? 0.12 : 0.12,
+              topP: isChatJob ? 0.85 : 0.9,
+              maxOutputTokens
+            },
+            model
+          )
         }),
         signal: AbortSignal.timeout(geminiFetchTimeoutMs)
       };
@@ -706,6 +709,24 @@ function stripInlineImagesFromContents(contentsArr) {
     parts: (turn.parts || []).filter((p) => !p.inlineData)
   }));
 }
+function joinGeminiPartsText(parts) {
+  if (!Array.isArray(parts)) return "";
+  const visible = parts.filter((p) => p && p.thought !== true).map((p) => typeof p?.text === "string" ? p.text : "").join("").trim();
+  if (visible) return visible;
+  return parts.map((p) => typeof p?.text === "string" ? p.text : "").join("").trim();
+}
+function buildGenerationConfig(prep, model) {
+  const m = String(model || "");
+  const cfg = {
+    temperature: prep.temperature,
+    topP: prep.topP,
+    maxOutputTokens: prep.maxOutputTokens
+  };
+  if (/gemini-2\.5/i.test(m) && /flash/i.test(m) && !/pro/i.test(m)) {
+    cfg.thinkingConfig = { thinkingBudget: 0 };
+  }
+  return cfg;
+}
 async function geminiGenerateOnce(prep, model, contents) {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
@@ -723,11 +744,7 @@ async function geminiGenerateOnce(prep, model, contents) {
           parts: [{ text: prep.systemContent }]
         },
         contents,
-        generationConfig: {
-          temperature: prep.temperature,
-          topP: prep.topP,
-          maxOutputTokens: prep.maxOutputTokens
-        }
+        generationConfig: buildGenerationConfig(prep, model)
       }),
       signal: AbortSignal.timeout(prep.geminiFetchTimeoutMs)
     }
@@ -748,7 +765,7 @@ async function geminiGenerateOnce(prep, model, contents) {
     return { ok: false, status: 502, message: "invalid_json" };
   }
   const parts = data.candidates?.[0]?.content?.parts;
-  const text = Array.isArray(parts) ? parts.filter((p) => p && p.thought !== true).map((p) => typeof p?.text === "string" ? p.text : "").join("").trim() : "";
+  const text = joinGeminiPartsText(parts);
   const finishReason = String(data.candidates?.[0]?.finishReason || "").trim();
   if (!text) return { ok: false, status: 502, message: "empty_response" };
   return { ok: true, text, finishReason };
@@ -786,9 +803,7 @@ ${chunk}`.trim();
   return out;
 }
 function extractStreamChunkText(obj) {
-  const parts = obj?.candidates?.[0]?.content?.parts;
-  if (!Array.isArray(parts)) return "";
-  return parts.filter((p) => p && p.thought !== true).map((p) => typeof p?.text === "string" ? p.text : "").join("");
+  return joinGeminiPartsText(obj?.candidates?.[0]?.content?.parts);
 }
 async function consumeGeminiSseStream(body, onText) {
   const reader = body.getReader();
@@ -868,11 +883,7 @@ async function streamOneGeminiModel(prep, model, push) {
         parts: [{ text: prep.systemContent }]
       },
       contents: prep.contents,
-      generationConfig: {
-        temperature: prep.temperature,
-        topP: prep.topP,
-        maxOutputTokens: prep.maxOutputTokens
-      }
+      generationConfig: buildGenerationConfig(prep, model)
     }),
     signal: AbortSignal.timeout(prep.geminiFetchTimeoutMs)
   });

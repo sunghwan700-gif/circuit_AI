@@ -178,6 +178,8 @@ async function sendOpenAiChatStreaming(
     chatGuidance: options?.chatGuidance,
     hasImages: options?.hasImages,
     aiTask: options?.aiTask,
+    preferFlash:
+      options?.preferFlash === true || options?.aiTask === 'teacher-draft',
   }
 
   const bodyJson = JSON.stringify(body)

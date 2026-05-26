@@ -79,6 +79,8 @@ export async function prepareGeminiChatRequest(body, env) {
     (/최종 보고서|SWOT|종합 피드백/i.test(ctx) && !isTeacherDraftJob)
   const isReportJob = isReportJsonJob || isTeacherDraftJob
   const isChatJob = !isReportJob
+  /** 교사 피드백 초안: Pro·이어쓰기 대신 Flash 단발 응답 (Vercel 타임아웃 회피) */
+  const preferFlashEffective = preferFlashBody === true || isTeacherDraftJob
 
   const explicitModel = normalizeModel(
     env.GEMINI_MODEL || env.GOOGLE_MODEL || '',
@@ -88,7 +90,7 @@ export async function prepareGeminiChatRequest(body, env) {
   const defaultModel = 'gemini-2.5-flash'
   const flashPrimary = 'gemini-2.5-flash'
   let primaryModel
-  if (preferFlashBody === true) {
+  if (preferFlashEffective === true) {
     primaryModel = flashPrimary
   } else if (isChatJob) {
     primaryModel = chatModelEnv || explicitModel || defaultModel
@@ -107,7 +109,7 @@ export async function prepareGeminiChatRequest(body, env) {
     (proOnlyFlag !== '0' &&
       proOnlyFlag !== 'false' &&
       useProPrimary &&
-      preferFlashBody !== true)
+      preferFlashEffective !== true)
 
   const chatFallbackDefault = proOnly ? '' : 'gemini-2.5-flash,gemini-2.0-flash'
 
@@ -145,7 +147,7 @@ export async function prepareGeminiChatRequest(body, env) {
     isServerlessDeploy &&
     useProPrimary &&
     !isBgJob &&
-    preferFlashBody !== true &&
+    preferFlashEffective !== true &&
     String(env.GEMINI_SYNC_PRO_TIGHT ?? '0').trim() === '1'
 
   const earlyMsgList = (Array.isArray(messages) ? messages : []).filter((m) => {
@@ -174,9 +176,7 @@ export async function prepareGeminiChatRequest(body, env) {
       ? 4096
       : 3072
     : isTeacherDraftJob
-      ? useProPrimary
-        ? 1024
-        : 896
+      ? 768
       : useProPrimary
         ? syncProTight
           ? isChatJob
@@ -207,12 +207,12 @@ export async function prepareGeminiChatRequest(body, env) {
   const maxContinues =
     syncProTight && isChatJob
       ? 0
-      : isReportJsonJob || isTeacherDraftJob
-        ? isServerlessDeploy
-          ? isTeacherDraftJob
-            ? 1
-            : 3
-          : 4
+      : isTeacherDraftJob
+        ? 0
+        : isReportJsonJob
+          ? isServerlessDeploy
+            ? 3
+            : 4
         : isBgJob && isChatJob
           ? 2
           : isChatJob
@@ -241,9 +241,11 @@ export async function prepareGeminiChatRequest(body, env) {
     Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5000
       ? Math.floor(fetchTimeoutParsed)
       : isServerlessDeploy
-        ? isReportJsonJob || isTeacherDraftJob
-          ? 57_000
-          : syncProTight
+        ? isTeacherDraftJob
+          ? 28_000
+          : isReportJsonJob
+            ? 57_000
+            : syncProTight
             ? 23_000
             : 52_000
         : 120_000
@@ -1341,6 +1343,29 @@ export async function runGeminiChatStreamToPush(body, env, push) {
     if (prep.isReportJsonJob) {
       clearInterval(pingTimer)
       await runGeminiChatBufferedFallback(body, env, push)
+      return
+    }
+
+    if (prep.isTeacherDraftJob) {
+      clearInterval(pingTimer)
+      push({ event: 'status', message: '피드백 초안 작성 중…' })
+      for (const model of prep.modelCandidatesRun.slice(0, 2)) {
+        try {
+          const hit = await streamOneGeminiModel(prep, model, push)
+          if (hit.ok && String(hit.text || '').trim()) {
+            push({
+              event: 'done',
+              text: String(hit.text).trim(),
+              model: hit.model || model,
+            })
+            return
+          }
+          lastMsg = hit.message || lastMsg
+        } catch (e) {
+          lastMsg = e instanceof Error ? e.message : String(e)
+        }
+      }
+      push({ event: 'error', message: lastMsg })
       return
     }
 

@@ -363,6 +363,20 @@ function buildTeacherDraftContext(detail) {
   return lines.join('\n')
 }
 
+/** @param {import('./teacher-storage.js').SubmissionRecord} detail */
+function buildLocalTeacherDraftFallback(detail) {
+  const name = String(detail.student?.info || '학습자').trim() || '학습자'
+  const s = truncateForTeacherDraft(detail.swot?.s, 80)
+  const w = truncateForTeacherDraft(detail.swot?.w, 80)
+  const summary = truncateForTeacherDraft(detail.aiSummary, 160)
+  const lines = [`${name} 학생, 이번 실습 수고했습니다.`]
+  if (s) lines.push(`잘한 점: ${s}`)
+  if (w) lines.push(`보완·다음 실습: ${w}`)
+  else if (summary) lines.push(`참고: ${summary}`)
+  else lines.push('다음에는 작업 전 전원·배선을 다시 확인해 주세요.')
+  return lines.join('\n').slice(0, 280)
+}
+
 function tryParseJsonLoose(s) {
   const raw = String(s || '').trim()
   if (!raw) return null
@@ -1135,6 +1149,7 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
       const useApi = isOpenAiProxyAvailable()
       const context = buildTeacherDraftContext(detail)
       const hasTeacherSource =
+        Boolean(String(detail.student?.info || '').trim()) ||
         Boolean(String(detail.aiSummary || '').trim()) ||
         Boolean(String(detail.chatTranscript || '').trim()) ||
         Boolean(String(detail.selfEval || '').trim()) ||
@@ -1172,8 +1187,9 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
       const draftOpts = {
         skipRefine: true,
         aiTask: 'teacher-draft',
+        preferFlash: true,
         practiceContext: teacherPractice,
-        maxAttempts: 2,
+        maxAttempts: 3,
       }
       try {
         const draft = await sendOpenAiChat(
@@ -1195,11 +1211,22 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
         ta.value = trimmed
         msg.className = 'success-msg teacher-detail__msg'
         msg.textContent = '짧은 초안을 입력란에 넣었습니다. 검토 후 저장하세요.'
+        msg.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
       } catch (e) {
-        msg.className = 'info-banner teacher-detail__msg'
-        msg.textContent =
-          (e instanceof Error ? normalizeChatFetchError(e) : String(e)) +
-          ' (잠시 뒤 다시 시도하거나, 학습자에게 채팅·「최종 실습일지 생성」 후 재제출을 요청하세요.)'
+        const local = buildLocalTeacherDraftFallback(detail)
+        if (local) {
+          ta.value = local
+          msg.className = 'info-banner teacher-detail__msg'
+          msg.textContent =
+            'AI 연결이 원활하지 않아 제출 내용을 바탕으로 짧은 초안을 넣었습니다. 필요하면 수정한 뒤 저장하세요.'
+          msg.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        } else {
+          msg.className = 'info-banner teacher-detail__msg'
+          msg.textContent =
+            (e instanceof Error ? normalizeChatFetchError(e) : String(e)) +
+            ' (잠시 뒤 다시 시도하거나, 학습자에게 채팅·「최종 실습일지 생성」 후 재제출을 요청하세요.)'
+          msg.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        }
       } finally {
         aiBtn.disabled = false
       }

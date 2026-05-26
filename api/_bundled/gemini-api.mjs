@@ -52,6 +52,7 @@ async function prepareGeminiChatRequest(body, env) {
   const isReportJsonJob = aiTask === "report-json" || /최종 보고서|SWOT|종합 피드백/i.test(ctx) && !isTeacherDraftJob;
   const isReportJob = isReportJsonJob || isTeacherDraftJob;
   const isChatJob = !isReportJob;
+  const preferFlashEffective = preferFlashBody === true || isTeacherDraftJob;
   const explicitModel = normalizeModel(
     env.GEMINI_MODEL || env.GOOGLE_MODEL || ""
   );
@@ -59,7 +60,7 @@ async function prepareGeminiChatRequest(body, env) {
   const defaultModel = "gemini-2.5-flash";
   const flashPrimary = "gemini-2.5-flash";
   let primaryModel;
-  if (preferFlashBody === true) {
+  if (preferFlashEffective === true) {
     primaryModel = flashPrimary;
   } else if (isChatJob) {
     primaryModel = chatModelEnv || explicitModel || defaultModel;
@@ -70,7 +71,7 @@ async function prepareGeminiChatRequest(body, env) {
   }
   const useProPrimary = /pro/i.test(primaryModel);
   const proOnlyFlag = String(env.GEMINI_PRO_ONLY ?? "").trim().toLowerCase();
-  const proOnly = proOnlyFlag === "1" || proOnlyFlag === "true" || proOnlyFlag !== "0" && proOnlyFlag !== "false" && useProPrimary && preferFlashBody !== true;
+  const proOnly = proOnlyFlag === "1" || proOnlyFlag === "true" || proOnlyFlag !== "0" && proOnlyFlag !== "false" && useProPrimary && preferFlashEffective !== true;
   const chatFallbackDefault = proOnly ? "" : "gemini-2.5-flash,gemini-2.0-flash";
   const fallbackModels = String(
     env.GEMINI_FALLBACK_MODELS ?? chatFallbackDefault
@@ -95,7 +96,7 @@ async function prepareGeminiChatRequest(body, env) {
     const rest = modelCandidates.filter((m) => !/flash/i.test(m));
     modelCandidates = [...flashFirst, ...rest];
   }
-  const syncProTight = isServerlessDeploy && useProPrimary && !isBgJob && preferFlashBody !== true && String(env.GEMINI_SYNC_PRO_TIGHT ?? "0").trim() === "1";
+  const syncProTight = isServerlessDeploy && useProPrimary && !isBgJob && preferFlashEffective !== true && String(env.GEMINI_SYNC_PRO_TIGHT ?? "0").trim() === "1";
   const earlyMsgList = (Array.isArray(messages) ? messages : []).filter((m) => {
     const t = String(m?.content || "").trim();
     if (m?.role === "user" && /^다음은 전기 실습/.test(t)) return false;
@@ -115,13 +116,13 @@ async function prepareGeminiChatRequest(body, env) {
 ${contextDescription}`
   );
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || "").trim());
-  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? useProPrimary ? 1024 : 896 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
+  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? 768 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
   const modelCandidatesRun = proOnly ? modelCandidates.slice(0, 1) : serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
-  const maxContinues = syncProTight && isChatJob ? 0 : isReportJsonJob || isTeacherDraftJob ? isServerlessDeploy ? isTeacherDraftJob ? 1 : 3 : 4 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 2 : useProPrimary ? 4 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
+  const maxContinues = syncProTight && isChatJob ? 0 : isTeacherDraftJob ? 0 : isReportJsonJob ? isServerlessDeploy ? 3 : 4 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 2 : useProPrimary ? 4 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
   const retryDelaysMs = isBgJob ? [700, 1500, 3e3, 5e3, 8e3] : syncProTight ? [300, 700, 1200] : serverlessCompact ? [400, 900, 1800] : [250, 750, 1500, 3e3];
   const fetchTimeoutParsed = Number(String(env.GEMINI_FETCH_TIMEOUT_MS || "").trim());
-  const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? isReportJsonJob || isTeacherDraftJob ? 57e3 : syncProTight ? 23e3 : 52e3 : 12e4;
+  const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? isTeacherDraftJob ? 28e3 : isReportJsonJob ? 57e3 : syncProTight ? 23e3 : 52e3 : 12e4;
   const preferOneshot = isServerlessDeploy && !isBgJob && String(env.GEMINI_STREAM_CHAT ?? "0").trim() !== "1";
   const imageList = Array.isArray(images) ? images : [];
   const hasImages = imageList.length > 0 || hasImagesBody === true || hasImagesBody === "true";
@@ -957,6 +958,28 @@ async function runGeminiChatStreamToPush(body, env, push) {
     if (prep.isReportJsonJob) {
       clearInterval(pingTimer);
       await runGeminiChatBufferedFallback(body, env, push);
+      return;
+    }
+    if (prep.isTeacherDraftJob) {
+      clearInterval(pingTimer);
+      push({ event: "status", message: "\uD53C\uB4DC\uBC31 \uCD08\uC548 \uC791\uC131 \uC911\u2026" });
+      for (const model of prep.modelCandidatesRun.slice(0, 2)) {
+        try {
+          const hit = await streamOneGeminiModel(prep, model, push);
+          if (hit.ok && String(hit.text || "").trim()) {
+            push({
+              event: "done",
+              text: String(hit.text).trim(),
+              model: hit.model || model
+            });
+            return;
+          }
+          lastMsg = hit.message || lastMsg;
+        } catch (e) {
+          lastMsg = e instanceof Error ? e.message : String(e);
+        }
+      }
+      push({ event: "error", message: lastMsg });
       return;
     }
     const maxAttempts = prep.isServerlessDeploy ? 4 : 3;

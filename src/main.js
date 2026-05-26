@@ -1088,10 +1088,6 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
           <div class="teacher-readonly teacher-readonly--ai">${escapeHtml(detail.aiSummary?.trim() || '(학습자가 「최종 실습일지 생성」 전이거나 미생성)')}</div>
         </label>
         <label class="field field--block">
-          <span class="field__label">Circuit Chatbot 대화 요약</span>
-          <div class="teacher-readonly teacher-readonly--chat">${escapeHtml(detail.chatTranscript?.trim() ? (detail.chatTranscript.length > 1200 ? detail.chatTranscript.slice(-1200) : detail.chatTranscript) : '(대화 기록 없음)')}</div>
-        </label>
-        <label class="field field--block">
           <span class="field__label">자기평가</span>
           <div class="teacher-readonly">${escapeHtml(detail.selfEval || '(없음)')}</div>
         </label>

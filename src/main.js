@@ -1218,7 +1218,7 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
           ta.value = local
           msg.className = 'info-banner teacher-detail__msg'
           msg.textContent =
-            'AI 연결이 원활하지 않아 제출 내용을 바탕으로 짧은 초안을 넣었습니다. 필요하면 수정한 뒤 저장하세요.'
+            'AI 초안 생성에 실패해 제출 내용을 바탕으로 초안을 넣었습니다. 필요하면 수정한 뒤 저장하세요.'
           msg.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
         } else {
           msg.className = 'info-banner teacher-detail__msg'

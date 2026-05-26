@@ -91,7 +91,8 @@ export async function prepareGeminiChatRequest(body, env) {
   const flashPrimary = 'gemini-2.5-flash'
   let primaryModel
   if (preferFlashEffective === true) {
-    primaryModel = flashPrimary
+    // 2.5 Flash는 thinking 토큰이 출력 한도를 잡아먹어 empty_response가 날 수 있음
+    primaryModel = isTeacherDraftJob ? 'gemini-2.0-flash' : flashPrimary
   } else if (isChatJob) {
     primaryModel = chatModelEnv || explicitModel || defaultModel
   } else if (isReportJob) {
@@ -176,7 +177,7 @@ export async function prepareGeminiChatRequest(body, env) {
       ? 4096
       : 3072
     : isTeacherDraftJob
-      ? 1024
+      ? 2048
       : useProPrimary
         ? syncProTight
           ? isChatJob
@@ -1104,9 +1105,13 @@ async function geminiGenerateOnce(prep, model, contents) {
   } catch {
     return { ok: false, status: 502, message: 'invalid_json' }
   }
-  const parts = data.candidates?.[0]?.content?.parts
-  const text = joinGeminiPartsText(parts)
-  const finishReason = String(data.candidates?.[0]?.finishReason || '').trim()
+  const cand = data.candidates?.[0]
+  const parts = cand?.content?.parts
+  let text = joinGeminiPartsText(parts)
+  if (!text && typeof cand?.content?.text === 'string') {
+    text = String(cand.content.text).trim()
+  }
+  const finishReason = String(cand?.finishReason || '').trim()
   if (!text) return { ok: false, status: 502, message: 'empty_response' }
   return { ok: true, text, finishReason }
 }
@@ -1361,7 +1366,12 @@ export async function runGeminiChatStreamToPush(body, env, push) {
     if (prep.isTeacherDraftJob) {
       clearInterval(pingTimer)
       push({ event: 'status', message: '피드백 초안 작성 중…' })
-      for (const model of prep.modelCandidatesRun.slice(0, 2)) {
+      const teacherModels = [
+        'gemini-2.0-flash',
+        'gemini-2.5-flash',
+        ...prep.modelCandidatesRun,
+      ].filter((m, i, a) => a.indexOf(m) === i)
+      for (const model of teacherModels.slice(0, 3)) {
         try {
           const hit = await streamOneGeminiModel(prep, model, push)
           if (hit.ok && String(hit.text || '').trim()) {
@@ -1377,7 +1387,7 @@ export async function runGeminiChatStreamToPush(body, env, push) {
           lastMsg = e instanceof Error ? e.message : String(e)
         }
       }
-      push({ event: 'error', message: lastMsg })
+      await runGeminiChatBufferedFallback(body, env, push)
       return
     }
 

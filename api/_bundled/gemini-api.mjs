@@ -61,7 +61,7 @@ async function prepareGeminiChatRequest(body, env) {
   const flashPrimary = "gemini-2.5-flash";
   let primaryModel;
   if (preferFlashEffective === true) {
-    primaryModel = flashPrimary;
+    primaryModel = isTeacherDraftJob ? "gemini-2.0-flash" : flashPrimary;
   } else if (isChatJob) {
     primaryModel = chatModelEnv || explicitModel || defaultModel;
   } else if (isReportJob) {
@@ -116,7 +116,7 @@ async function prepareGeminiChatRequest(body, env) {
 ${contextDescription}`
   );
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || "").trim());
-  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? 1024 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
+  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? 2048 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
   const modelCandidatesRun = proOnly ? modelCandidates.slice(0, 1) : serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
   const maxContinues = syncProTight && isChatJob ? 0 : isTeacherDraftJob ? 0 : isReportJsonJob ? isServerlessDeploy ? 3 : 4 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 2 : useProPrimary ? 4 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
@@ -764,9 +764,13 @@ async function geminiGenerateOnce(prep, model, contents) {
   } catch {
     return { ok: false, status: 502, message: "invalid_json" };
   }
-  const parts = data.candidates?.[0]?.content?.parts;
-  const text = joinGeminiPartsText(parts);
-  const finishReason = String(data.candidates?.[0]?.finishReason || "").trim();
+  const cand = data.candidates?.[0];
+  const parts = cand?.content?.parts;
+  let text = joinGeminiPartsText(parts);
+  if (!text && typeof cand?.content?.text === "string") {
+    text = String(cand.content.text).trim();
+  }
+  const finishReason = String(cand?.finishReason || "").trim();
   if (!text) return { ok: false, status: 502, message: "empty_response" };
   return { ok: true, text, finishReason };
 }
@@ -974,7 +978,12 @@ async function runGeminiChatStreamToPush(body, env, push) {
     if (prep.isTeacherDraftJob) {
       clearInterval(pingTimer);
       push({ event: "status", message: "\uD53C\uB4DC\uBC31 \uCD08\uC548 \uC791\uC131 \uC911\u2026" });
-      for (const model of prep.modelCandidatesRun.slice(0, 2)) {
+      const teacherModels = [
+        "gemini-2.0-flash",
+        "gemini-2.5-flash",
+        ...prep.modelCandidatesRun
+      ].filter((m, i, a) => a.indexOf(m) === i);
+      for (const model of teacherModels.slice(0, 3)) {
         try {
           const hit = await streamOneGeminiModel(prep, model, push);
           if (hit.ok && String(hit.text || "").trim()) {
@@ -990,7 +999,7 @@ async function runGeminiChatStreamToPush(body, env, push) {
           lastMsg = e instanceof Error ? e.message : String(e);
         }
       }
-      push({ event: "error", message: lastMsg });
+      await runGeminiChatBufferedFallback(body, env, push);
       return;
     }
     const maxAttempts = prep.isServerlessDeploy ? 4 : 3;

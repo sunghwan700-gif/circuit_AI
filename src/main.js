@@ -1210,7 +1210,7 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
         }
         ta.value = trimmed
         msg.className = 'success-msg teacher-detail__msg'
-        msg.textContent = '짧은 초안을 입력란에 넣었습니다. 검토 후 저장하세요.'
+        msg.textContent = '초안을 입력란에 넣었습니다. 검토 후 저장하세요.'
         msg.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
       } catch (e) {
         const local = buildLocalTeacherDraftFallback(detail)

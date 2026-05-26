@@ -175,8 +175,8 @@ export async function prepareGeminiChatRequest(body, env) {
       : 3072
     : isTeacherDraftJob
       ? useProPrimary
-        ? 896
-        : 768
+        ? 1024
+        : 896
       : useProPrimary
         ? syncProTight
           ? isChatJob
@@ -1008,8 +1008,10 @@ function looksTruncatedText(text, isChatJob = false) {
 /** @param {string} [finishReason] @param {string} text @param {object} prep */
 function needsContinueForPrep(finishReason, text, prep) {
   if (/MAX_TOKENS/i.test(String(finishReason || ''))) return true
+  // 교사 초안은 짧게 끝나도 정상 — 채팅용 잘림 판정으로 이어쓰기 하면 빈 응답·타임아웃이 날 수 있음
+  if (prep?.isTeacherDraftJob) return false
   if (prep?.isReportJsonJob) return looksTruncatedJson(text)
-  if (prep?.isTeacherDraftJob || prep?.isChatJob) {
+  if (prep?.isChatJob) {
     return looksTruncatedText(text, true)
   }
   return looksTruncatedText(text, false)
@@ -1336,7 +1338,7 @@ export async function runGeminiChatStreamToPush(body, env, push) {
   let lastMsg = 'AI가 답변을 만들지 못했습니다.'
 
   try {
-    if (prep.isReportJsonJob || prep.isTeacherDraftJob) {
+    if (prep.isReportJsonJob) {
       clearInterval(pingTimer)
       await runGeminiChatBufferedFallback(body, env, push)
       return

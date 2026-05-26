@@ -115,7 +115,7 @@ async function prepareGeminiChatRequest(body, env) {
 ${contextDescription}`
   );
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || "").trim());
-  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? useProPrimary ? 896 : 768 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
+  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? useProPrimary ? 1024 : 896 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
   const modelCandidatesRun = proOnly ? modelCandidates.slice(0, 1) : serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
   const maxContinues = syncProTight && isChatJob ? 0 : isReportJsonJob || isTeacherDraftJob ? isServerlessDeploy ? isTeacherDraftJob ? 1 : 3 : 4 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 2 : useProPrimary ? 4 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
@@ -692,8 +692,9 @@ function looksTruncatedText(text, isChatJob = false) {
 }
 function needsContinueForPrep(finishReason, text, prep) {
   if (/MAX_TOKENS/i.test(String(finishReason || ""))) return true;
+  if (prep?.isTeacherDraftJob) return false;
   if (prep?.isReportJsonJob) return looksTruncatedJson(text);
-  if (prep?.isTeacherDraftJob || prep?.isChatJob) {
+  if (prep?.isChatJob) {
     return looksTruncatedText(text, true);
   }
   return looksTruncatedText(text, false);
@@ -953,7 +954,7 @@ async function runGeminiChatStreamToPush(body, env, push) {
   const pingTimer = setInterval(() => push({ event: "ping" }), proMode ? 800 : 2e3);
   let lastMsg = "AI\uAC00 \uB2F5\uBCC0\uC744 \uB9CC\uB4E4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.";
   try {
-    if (prep.isReportJsonJob || prep.isTeacherDraftJob) {
+    if (prep.isReportJsonJob) {
       clearInterval(pingTimer);
       await runGeminiChatBufferedFallback(body, env, push);
       return;

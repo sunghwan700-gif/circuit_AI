@@ -1180,9 +1180,19 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
           [{ role: 'user', content: draftPrompt }],
           '교사용 개별 피드백 초안',
           undefined,
-          { ...draftOpts, hasImages: false },
+          {
+            ...draftOpts,
+            hasImages: false,
+            onStatus: (statusMsg) => {
+              if (statusMsg) msg.textContent = String(statusMsg)
+            },
+          },
         )
-        ta.value = draft
+        const trimmed = String(draft || '').trim()
+        if (!trimmed) {
+          throw new Error('AI가 빈 답변을 반환했습니다.')
+        }
+        ta.value = trimmed
         msg.className = 'success-msg teacher-detail__msg'
         msg.textContent = '짧은 초안을 입력란에 넣었습니다. 검토 후 저장하세요.'
       } catch (e) {

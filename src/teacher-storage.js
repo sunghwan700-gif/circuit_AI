@@ -322,11 +322,16 @@ export async function updateSubmissionFeedback(id, teacherFeedback) {
   }
 
   if (getApiBase()) {
-    const remote = await patchRemoteRecord(
-      id,
-      { teacherFeedback, feedbackUpdatedAt: r.feedbackUpdatedAt },
-      r.version,
-    )
+    const patch = { teacherFeedback, feedbackUpdatedAt: r.feedbackUpdatedAt }
+    const tryOnce = async () => patchRemoteRecord(id, patch, r.version)
+    let remote
+    try {
+      remote = await tryOnce()
+    } catch {
+      // 첫 요청 실패(서버 cold start/일시 오류) 시 1회 재시도
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      remote = await tryOnce()
+    }
     if (remote) {
       const list2 = loadSubmissionsLocal()
       const idx2 = list2.findIndex((x) => x.id === id)

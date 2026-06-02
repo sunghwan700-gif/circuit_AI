@@ -1024,15 +1024,27 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
     const targets = visibleIds.filter((id) => state.teacherCheckedIds.has(id))
     if (targets.length === 0) return
     if (!confirm(`선택된 제출 ${targets.length}개를 삭제할까요?`)) return
-    for (const id of targets) {
-      await removeSubmission(id)
-      state.teacherCheckedIds.delete(id)
-    }
-    setLastSeenCount(loadSubmissions().length)
-    if (targets.includes(state.teacherSelectedId ?? '')) {
-      state.teacherSelectedId = null
-    }
+    const deleteBtnLabel = bulkDeleteBtn.textContent
+    bulkDeleteBtn.disabled = true
+    bulkDeleteBtn.classList.add('btn--loading')
+    bulkDeleteBtn.textContent = '삭제 중…'
+    bulkDeleteBtn.setAttribute('aria-busy', 'true')
+    try {
+      for (const id of targets) {
+        await removeSubmission(id)
+        state.teacherCheckedIds.delete(id)
+      }
+      setLastSeenCount(loadSubmissions().length)
+      if (targets.includes(state.teacherSelectedId ?? '')) {
+        state.teacherSelectedId = null
+      }
       renderTeacherDashboard(host, loadSubmissions(), filterDept, filterSubject, false)
+    } finally {
+      bulkDeleteBtn.classList.remove('btn--loading')
+      bulkDeleteBtn.removeAttribute('aria-busy')
+      bulkDeleteBtn.textContent = deleteBtnLabel
+      updateBulkUi()
+    }
     })
   }
 
@@ -1240,11 +1252,30 @@ function renderTeacherDashboard(host, rows, filterDept, filterSubject, onlyFinal
 
     saveBtn?.addEventListener('click', async () => {
       if (!(ta instanceof HTMLTextAreaElement) || !msg) return
+      if (saveBtn instanceof HTMLButtonElement && saveBtn.disabled) return
+      const saveBtnLabel =
+        saveBtn instanceof HTMLButtonElement ? saveBtn.textContent : '피드백 저장'
+      if (saveBtn instanceof HTMLButtonElement) {
+        saveBtn.disabled = true
+        saveBtn.classList.add('btn--loading')
+        saveBtn.textContent = '저장 중…'
+        saveBtn.setAttribute('aria-busy', 'true')
+      }
+      msg.hidden = false
+      msg.className = 'info-banner teacher-detail__msg'
+      msg.textContent = '피드백을 저장하는 중…'
       let ok = false
       try {
         ok = await updateSubmissionFeedback(detail.id, ta.value.trim())
       } catch {
         ok = false
+      } finally {
+        if (saveBtn instanceof HTMLButtonElement) {
+          saveBtn.disabled = false
+          saveBtn.classList.remove('btn--loading')
+          saveBtn.textContent = saveBtnLabel
+          saveBtn.removeAttribute('aria-busy')
+        }
       }
       msg.hidden = false
       msg.className = ok ? 'success-msg teacher-detail__msg' : 'info-banner teacher-detail__msg'
@@ -1295,33 +1326,60 @@ function renderTeacherView(
     const err = pageHost.querySelector('.teacher-gate__err')
     const goBtn = pageHost.querySelector('.teacher-gate__go')
     const tryLogin = async () => {
+      if (goBtn instanceof HTMLButtonElement && goBtn.disabled) return
       const id = idEl instanceof HTMLInputElement ? idEl.value.trim() : ''
       const v = pw instanceof HTMLInputElement ? pw.value : ''
       if (err) err.hidden = true
 
-      // 원격 서버가 있으면, 교사 로그인은 서버가 토큰을 발급(브라우저에 비밀번호 노출 최소화)
-      const serverToken = await teacherLoginViaServer(id, v)
-      if (serverToken) {
-        setTeacherApiSessionToken(serverToken)
-        setTeacherAuth(true)
-        setLastSeenCount(loadSubmissions().length)
-        initTeacherStorage()
-          .catch(() => {})
-          .finally(() => render())
-        return
+      const loginBtnLabel =
+        goBtn instanceof HTMLButtonElement ? goBtn.textContent : '확인'
+      if (goBtn instanceof HTMLButtonElement) {
+        goBtn.disabled = true
+        goBtn.classList.add('btn--loading')
+        goBtn.textContent = '확인 중…'
+        goBtn.setAttribute('aria-busy', 'true')
       }
+      if (idEl instanceof HTMLInputElement) idEl.disabled = true
+      if (pw instanceof HTMLInputElement) pw.disabled = true
 
-      // 원격 서버가 없으면(로컬 모드) 기존 방식으로만 로그인
-      if (id === ADMIN_USERNAME && v === ADMIN_PASSWORD) {
-        setTeacherAuth(true)
-        setLastSeenCount(loadSubmissions().length)
-        render()
-        return
-      }
+      try {
+        // 원격 서버가 있으면, 교사 로그인은 서버가 토큰을 발급(브라우저에 비밀번호 노출 최소화)
+        const serverToken = await teacherLoginViaServer(id, v)
+        if (serverToken) {
+          setTeacherApiSessionToken(serverToken)
+          setTeacherAuth(true)
+          setLastSeenCount(loadSubmissions().length)
+          pageHost.innerHTML =
+            '<p class="teacher-gate__lead teacher-gate__lead--small">제출 목록을 불러오는 중…</p>'
+          initTeacherStorage()
+            .catch(() => {})
+            .finally(() => render())
+          return
+        }
 
-      if (err) {
-        err.hidden = false
-        err.textContent = '아이디 또는 비밀번호가 올바르지 않습니다.'
+        // 원격 서버가 없으면(로컬 모드) 기존 방식으로만 로그인
+        if (id === ADMIN_USERNAME && v === ADMIN_PASSWORD) {
+          setTeacherAuth(true)
+          setLastSeenCount(loadSubmissions().length)
+          render()
+          return
+        }
+
+        if (err) {
+          err.hidden = false
+          err.textContent = '아이디 또는 비밀번호가 올바르지 않습니다.'
+        }
+      } finally {
+        if (!getTeacherAuth()) {
+          if (goBtn instanceof HTMLButtonElement) {
+            goBtn.disabled = false
+            goBtn.classList.remove('btn--loading')
+            goBtn.textContent = loginBtnLabel
+            goBtn.removeAttribute('aria-busy')
+          }
+          if (idEl instanceof HTMLInputElement) idEl.disabled = false
+          if (pw instanceof HTMLInputElement) pw.disabled = false
+        }
       }
     }
     goBtn?.addEventListener('click', tryLogin)

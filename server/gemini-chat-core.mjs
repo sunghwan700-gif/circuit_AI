@@ -87,7 +87,8 @@ export async function prepareGeminiChatRequest(body, env) {
   )
   const chatModelEnv = normalizeModel(env.GEMINI_CHAT_MODEL || '')
 
-  const defaultModel = 'gemini-2.5-flash'
+  // 채팅(학습자 2~4단계)은 답변 품질 우선: 기본을 Pro로, 필요 시 Flash로 폴백
+  const defaultModel = isChatJob ? 'gemini-2.5-pro' : 'gemini-2.5-flash'
   const flashPrimary = 'gemini-2.5-flash'
   let primaryModel
   if (preferFlashEffective === true) {
@@ -311,7 +312,7 @@ export async function prepareGeminiChatRequest(body, env) {
     : ''
   const practiceExtra = String(practiceContext || '').trim()
 
-  const systemContent = `당신은 전기 실습(회로·승강기·철도전기신호 등) 실습일지를 돕는 조교입니다. 항상 한국어로 답합니다.
+  const systemContent = `당신은 전기 실습(회로·승강기·철도전기신호 등) 실습을 돕는 조교입니다. 항상 한국어로 답합니다.
 
 목표: 학습자가 실습 중 질문하고, 회로도·실습 사진을 근거로 정확한 피드백을 받도록 돕습니다.
 
@@ -330,14 +331,14 @@ ${
 - 채팅·사진 전부를 반영하려 하지 말 것. 발췌에 없는 내용·단자 번호 금지.`
         : isChatJob
           ? wantsDetail
-            ? `채팅(상세·목록·접점):
-- 질문에 직접 답함. **한 번에 끝까지**: ## 요약 → ## 핵심(불릿 4~6, 각 1문장 완결) → ## 할 일(2~3). **500~750자**.
-- 접점·단자는 도면 표기만.`
-            : `채팅 답변(균형형):
-- 마지막 질문에 **직접** 답함. 동문서답·강의 금지.
-- **한 번에 세 섹션 모두 완결**: ## 요약(1~2문장) → ## 핵심(불릿 3~4, 구체적) → ## 할 일(불릿 2~3). 안전 이슈는 맨 위 ## 안전(1~2문장).
-- 분량 **350~550자**. 너무 짧게 생략하지 말고, 불필요한 장문·반복은 금지.
-- 모든 불릿을 문장으로 끝낸 뒤 종료하세요.`
+            ? `채팅(상세 요청):
+- 마지막 학생 질문에 바로 답하고, 필요할 때만 1개 질문으로 확인합니다.
+- 목록/접점/절차가 필요하면 불릿으로 정리하되 과도한 템플릿(## 요약 등)은 강제하지 않습니다.
+- 분량은 상황에 맞게(대략 450~900자).`
+            : `채팅(일반):
+- 마지막 학생 질문에 **바로 답**합니다. 불필요한 안전 문구 반복/강의/형식 강제 금지.
+- 답변은 '대화하듯' 자연스럽게(짧고 명확). 필요하면 다음 행동(체크 순서)을 2~4개만 제시합니다.
+- 위험(감전/단락/회전부 등)이 명확할 때만 전원 차단을 1줄로 안내합니다.`
           : ''
   }
 
@@ -449,7 +450,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       }
     }
 
-    return {
+  return {
       ok: true,
       key,
       systemContent,
@@ -458,8 +459,9 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       maxOutputTokens,
       isChatJob,
       geminiFetchTimeoutMs,
-      temperature: isChatJob ? 0.12 : 0.12,
-      topP: isChatJob ? 0.85 : 0.9,
+      // 채팅은 너무 낮은 temperature가 "딱딱한 정답형"을 만들 수 있어 약간 올립니다.
+      temperature: isChatJob ? 0.32 : 0.12,
+      topP: isChatJob ? 0.9 : 0.9,
       serverlessCompact,
       syncProTight,
       primaryModel,

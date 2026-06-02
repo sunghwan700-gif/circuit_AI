@@ -1493,8 +1493,6 @@ function isProChatConfigured() {
 
 function aiInstructionForPage(contextDescription, hasImages = true) {
   const subject = String(state.data.subject || '').trim()
-  const dept = String(state.data.dept || '').trim()
-  const info = String(state.data.info || '').trim()
   const page = state.page
   const stage =
     page === 2
@@ -1506,21 +1504,16 @@ function aiInstructionForPage(contextDescription, hasImages = true) {
           : '기타'
 
   const sparseBlock = !hasImages
-    ? `
-중요(이미지 없음):
-- 이번 요청에는 분석용 회로도/실습 사진이 첨부되어 있지 않습니다. 특정 단자·배선·부품 상태를 단정하거나 '확인했다'처럼 쓰지 마세요.
-- 일반 안전·실습 진행 팁과, 구체 답을 위해 필요한 사진/정보(무엇을 어떻게 찍을지)만 짧게(6문장 이내) 안내하세요.
-`
+    ? `\n(이미지 없음: 단자/배선 상태는 단정하지 말고, 필요한 사진/정보를 1~2문장으로 요청하세요.)\n`
     : ''
 
-  return `실습 채팅 — 균형형 답변(중요 정보 포함).
-- **한 번에 완결**: ## 요약(1~2문장) → ## 핵심(불릿 3~4) → ## 할 일(불릿 2~3). 안전은 맨 위 ## 안전.
-- 분량 **350~550자**. 너무 짧지 않게, 장황한 강의·반복은 금지.
-- 추측·가상 단자번호 금지. 확인 질문 최대 1개.
-${sparseBlock}
-맥락: ${stage} | ${subject || '과목 미입력'} | ${contextDescription || ''}
-${hasImages ? '- 이미지: 질문과 관련된 표기·배선만. 불명확하면 추가 사진 안내 1줄.' : ''}
-`
+  return `실습 채팅(대화형)
+- 마지막 질문에 **바로 답**하고, 필요하면 1개만 되묻습니다.
+- 말투는 딱딱한 보고서체가 아니라 **자연스러운 대화체**로 짧고 명확하게 씁니다.
+- 매번 같은 안전 문구를 반복하지 말고, **위험/전원 관련일 때만** 한 줄로 안내합니다.
+- 형식(## 요약 등) 강제하지 마세요. 불릿은 필요할 때만.
+- 추측 금지: 도면/사진에 보이지 않는 단자 번호·결선을 만들어내지 않습니다.${sparseBlock}
+맥락: ${stage} | ${subject || '과목 미입력'} | ${contextDescription || ''}`
 }
 
 function takeLastFiles(files, n) {

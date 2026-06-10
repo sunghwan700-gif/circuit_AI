@@ -2211,12 +2211,7 @@ function render() {
           <p class="balloons-msg" hidden></p>
         </section>
         <section class="report-card report-card--export">
-          <h2 class="report-card__title"><span class="report-card__num">03</span>보고서 출력</h2>
-          <p class="report-card__p">입력·업로드한 내용이 포함된 PDF를 내보냅니다.</p>
-          <button type="button" class="btn btn--secondary btn--block pdf-btn">PDF 내보내기</button>
-          <p class="pdf-msg" hidden></p>
-          <hr class="divider divider--tight" />
-          <h3 class="report-card__subtitle">교사 공유</h3>
+          <h2 class="report-card__title"><span class="report-card__num">03</span>교사 공유</h2>
           <p class="report-card__p report-card__p--small">교사 Dashboard에 제출을 누르면 선생님의 피드백을 받을 수 있습니다.</p>
           ${
             isRemoteSubmissionsEnabled()
@@ -2226,6 +2221,11 @@ function render() {
           <button type="button" class="btn btn--outline-blue btn--block submit-teacher-btn">교사 Dashboard에 제출</button>
           <p class="submit-teacher-msg" hidden></p>
           <p class="teacher-feedback-status info-banner info-banner--soft" aria-live="polite"></p>
+          <hr class="divider divider--tight" />
+          <h2 class="report-card__title"><span class="report-card__num">04</span>보고서 출력</h2>
+<p class="report-card__p">입력·업로드한 내용이 포함된 PDF를 내보냅니다.</p>
+          <button type="button" class="btn btn--secondary btn--block pdf-btn">PDF 내보내기</button>
+          <p class="pdf-msg" hidden></p>
         </section>
       </div>
       <button type="button" class="btn btn--secondary btn--block restart-btn">처음으로 돌아가기</button>

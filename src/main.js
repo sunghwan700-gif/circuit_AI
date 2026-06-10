@@ -583,19 +583,17 @@ async function refreshTeacherFeedbackStatusFromServer(root) {
 
   // 원격에서 피드백 완료로 확인되면, 로컬 표시도 즉시 반영되도록 submissions 로컬에도 동기화
   if (remote.feedbackReady) {
+    const doneTs = remote.feedbackUpdatedAt || Date.now()
+    try {
+      localStorage.setItem(`circuit_submission_feedback_done_v1:${id}`, String(doneTs))
+    } catch {
+      // ignore
+    }
     const list = loadSubmissions()
     const r = list.find((x) => x && String(x.id) === id)
     if (r) {
       r.teacherFeedback = r.teacherFeedback || '(교사 피드백 작성 완료)'
-      r.feedbackUpdatedAt = remote.feedbackUpdatedAt || r.feedbackUpdatedAt || Date.now()
-      try {
-        localStorage.setItem(
-          `circuit_submission_feedback_done_v1:${id}`,
-          String(r.feedbackUpdatedAt || Date.now()),
-        )
-      } catch {
-        // ignore
-      }
+      r.feedbackUpdatedAt = doneTs
     }
   }
 

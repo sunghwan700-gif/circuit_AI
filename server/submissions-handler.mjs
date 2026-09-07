@@ -71,6 +71,68 @@ async function writeList(store, list) {
   await store.setJSON(BLOB_SUBMISSIONS_KEY, list)
 }
 
+/** 저장 용량 초과 시 오래된 제출의 이미지·대화 본문을 줄여 재시도합니다. */
+function pruneSubmissionsForStorage(list) {
+  const arr = Array.isArray(list) ? list : []
+  return arr.map((r, idx) => {
+    if (!r || typeof r !== 'object') return r
+    const images =
+      r.images && typeof r.images === 'object' ? { ...r.images } : undefined
+    if (images) {
+      delete images.process
+      if (Array.isArray(images.final) && images.final.length > 1) {
+        images.final = images.final.slice(0, 1)
+      }
+    }
+    const out = { ...r, images }
+    if (idx >= 1) {
+      // 최신 1건 외에는 대화 전문을 버려 목록 용량을 줄입니다.
+      delete out.chatTranscript
+    }
+    return out
+  })
+}
+
+/** @param {any} store @param {unknown[]} list */
+async function writeListResilient(store, list) {
+  try {
+    await writeList(store, list)
+    return list
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e || '')
+    if (!/fetch failed|too large|payload|entity too large|413|max.*size|Request Entity/i.test(msg)) {
+      throw e
+    }
+    const pruned = pruneSubmissionsForStorage(list)
+    try {
+      await writeList(store, pruned)
+      return pruned
+    } catch (e2) {
+      const msg2 = e2 instanceof Error ? e2.message : String(e2 || '')
+      if (!/fetch failed|too large|payload|entity too large|413|max.*size|Request Entity/i.test(msg2)) {
+        throw e2
+      }
+      const hard = (Array.isArray(pruned) ? pruned : []).map((r, idx) => {
+        if (!r || typeof r !== 'object') return r
+        if (idx === 0) {
+          const images =
+            r.images && typeof r.images === 'object' ? { ...r.images } : undefined
+          if (images) {
+            delete images.process
+            if (Array.isArray(images.final) && images.final.length > 1) {
+              images.final = images.final.slice(0, 1)
+            }
+          }
+          return { ...r, images }
+        }
+        return { ...r, images: undefined, chatTranscript: undefined }
+      })
+      await writeList(store, hard)
+      return hard
+    }
+  }
+}
+
 /** @param {any} store */
 async function readSessions(store) {
   const data = await store.get(BLOB_SESSIONS_KEY, { type: 'json' })
@@ -292,15 +354,17 @@ async function handleListRoot(store, event) {
     if (idx >= 0) list[idx] = next
     else list.push(next)
     list.sort((a, b) => Number(b.submittedAt || 0) - Number(a.submittedAt || 0))
-    await writeList(store, list)
+    const savedList = await writeListResilient(store, list)
+    const saved =
+      (Array.isArray(savedList) ? savedList : []).find((x) => x && String(x.id) === id) || next
     return {
       statusCode: 200,
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
-        ETag: `W/"${next.version}"`,
+        ETag: `W/"${saved.version}"`,
         ...corsHeaders(),
       },
-      body: JSON.stringify(next),
+      body: JSON.stringify(saved),
     }
   }
 

@@ -766,19 +766,16 @@ async function buildSubmissionRecordFromState() {
     (reportRoot ? readSwotFromReport(reportRoot) : { s: '', w: '', o: '', t: '' })
   /** @type {{ circuit?: string, final?: string[], process?: string[] }} */
   const images = {}
+  // 교사 대시보드는 회로도·최종 1장만 표시. 과도한 이미지로 KV 저장(500 fetch failed)이 나지 않게 용량을 줄입니다.
+  const maxW = 800
+  const quality = 0.62
   if (d.circuitImg) {
-    images.circuit = await fileToCompressedJpegDataUrl(d.circuitImg)
+    images.circuit = await fileToCompressedJpegDataUrl(d.circuitImg, maxW, quality)
   }
   if (d.finalImgs?.length) {
-    images.final = []
-    for (const f of d.finalImgs) {
-      images.final.push(await fileToCompressedJpegDataUrl(f))
-    }
-  }
-  if (d.processImgs?.length) {
-    images.process = []
-    for (const f of d.processImgs.slice(0, 4)) {
-      images.process.push(await fileToCompressedJpegDataUrl(f))
+    const f = d.finalImgs[d.finalImgs.length - 1]
+    if (f) {
+      images.final = [await fileToCompressedJpegDataUrl(f, maxW, quality)]
     }
   }
   return {

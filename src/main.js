@@ -2219,7 +2219,7 @@ function render() {
           <hr class="divider divider--tight" />
           <h2 class="report-card__title"><span class="report-card__num">04</span>보고서 출력</h2>
 <p class="report-card__p">입력·업로드한 내용이 포함된 PDF를 내보냅니다.</p>
-          <button type="button" class="btn btn--secondary btn--block pdf-btn">PDF 내보내기</button>
+          <button type="button" class="btn btn--secondary btn--block pdf-btn">최종 실습일지 생성</button>
           <p class="pdf-msg" hidden></p>
         </section>
       </div>

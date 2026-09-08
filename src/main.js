@@ -2331,7 +2331,7 @@ function render() {
       if (!state.journalSnapshot) {
         msg.className = 'info-banner'
         msg.textContent =
-          '먼저「최종 실습일지 생성」을 실행한 뒤 PDF를 내보내 주세요.'
+          '먼저 「실습 결과 분석」과 「교사 Dashboard에 제출」 순으로 실행한 뒤 최종 실습일지를 생성해 주세요.'
         return
       }
       msg.className = 'success-msg'
@@ -2408,7 +2408,7 @@ function render() {
       if (!state.journalSnapshot) {
         msg.className = 'info-banner submit-teacher-msg'
         msg.textContent =
-          '먼저 「최종 실습일지 생성」을 실행해 SWOT·종합 피드백을 만든 뒤 교사 Dashboard에 제출해 주세요.'
+          '먼저 「실습 결과 분석」을 실행해 SWOT·종합 피드백을 만든 뒤 교사 Dashboard에 제출해 주세요.'
         return
       }
       msg.className = 'success-msg submit-teacher-msg'

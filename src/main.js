@@ -2202,7 +2202,7 @@ function render() {
             <li><span class="swot-list__k">O</span><span><strong>Opportunity</strong> · <span class="swot-list__v ai-output" data-k="o">${escapeHtml(swotO)}</span></span></li>
             <li><span class="swot-list__k">T</span><span><strong>Threat</strong> · <span class="swot-list__v ai-output" data-k="t">${escapeHtml(swotT)}</span></span></li>
           </ul>
-          <button type="button" class="btn btn--primary btn--block final-report-btn">최종 실습일지 생성</button>
+          <button type="button" class="btn btn--primary btn--block final-report-btn">실습 결과 분석</button>
           <p class="balloons-msg" hidden></p>
         </section>
         <section class="report-card report-card--export">
@@ -2218,7 +2218,7 @@ function render() {
           <p class="teacher-feedback-status info-banner info-banner--soft" aria-live="polite"></p>
           <hr class="divider divider--tight" />
           <h2 class="report-card__title"><span class="report-card__num">04</span>보고서 출력</h2>
-<p class="report-card__p">입력·업로드한 내용이 포함된 PDF를 내보냅니다.</p>
+<p class="report-card__p">입력·업로드한 내용이 포함된 최종 실습일지를 생성하고 PDF를 내보냅니다.</p>
           <button type="button" class="btn btn--secondary btn--block pdf-btn">최종 실습일지 생성</button>
           <p class="pdf-msg" hidden></p>
         </section>
@@ -2271,7 +2271,7 @@ function render() {
         state.journalSnapshot = null
         msg.className = 'info-banner'
         msg.textContent =
-          '아직 입력된 내용이 없습니다. 2~4단계에서 Circuit Chatbot으로 질문하거나, 회로도·자기평가를 입력한 뒤 「최종 실습일지 생성」을 눌러 주세요.'
+          '아직 입력된 내용이 없습니다. 2~4단계에서 Circuit Chatbot으로 질문하거나, 회로도·자기평가를 입력한 뒤 「실습 결과 분석」을 눌러 주세요.'
         return
       }
       if (!chatOk && uploads === 0) {

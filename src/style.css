@@ -2992,6 +2992,45 @@ code {
   margin-left: auto;
   margin-right: auto;
   width: auto;
+  background: linear-gradient(180deg, #4f46e5 0%, #4338ca 100%);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.28);
+}
+
+.report-self-eval .self-eval-btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+  border-color: transparent;
+  background: linear-gradient(180deg, #4338ca 0%, #4f46e5 100%);
+  color: #fff;
+}
+
+.circuit-page--report .submit-teacher-btn {
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.28);
+}
+
+.circuit-page--report .submit-teacher-btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+  border-color: transparent;
+  background: linear-gradient(180deg, #1d4ed8 0%, #2563eb 100%);
+  color: #fff;
+}
+
+.circuit-page--report .pdf-btn {
+  background: linear-gradient(180deg, #ea580c 0%, #c2410c 100%);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.28);
+}
+
+.circuit-page--report .pdf-btn:hover:not(:disabled) {
+  filter: brightness(1.05);
+  border-color: transparent;
+  background: linear-gradient(180deg, #c2410c 0%, #ea580c 100%);
+  color: #fff;
 }
 
 /* 자기평가 입력: 챗봇 입력과 동일 크기 */

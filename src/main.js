@@ -2185,12 +2185,12 @@ function render() {
             })()}</dd></div>
             <div class="stat-list__row"><dt>이미지 업로드</dt><dd>${totalUploadedImageCount()}장</dd></div>
           </dl>
-          <div class="info-banner info-banner--soft ai-summary-banner ai-output">${escapeHtml(aiSummary || '2~4단계 Circuit Chatbot 대화 후 「최종 실습일지 생성」을 누르면, 채팅 내용이 반영된 종합 피드백이 채워집니다.')}</div>
+          <div class="info-banner info-banner--soft ai-summary-banner ai-output">${escapeHtml(aiSummary || '2~4단계 Circuit Chatbot 대화 후 「실습 결과 분석」을 누르면, 채팅 내용이 반영된 종합 피드백이 채워집니다.')}</div>
           <hr class="divider" />
           <div class="report-self-eval">
             <h3 class="report-card__subtitle">자기평가</h3>
             <textarea class="input input--area self-eval-input" rows="3" placeholder="오늘 실습에 대한 나의 평가를 적어 주세요."></textarea>
-            <button type="button" class="btn btn--secondary self-eval-btn">자기평가 제출</button>
+            <button type="button" class="btn btn--block self-eval-btn">자기평가 제출</button>
             <p class="self-eval-msg" hidden></p>
           </div>
         </section>
@@ -2213,13 +2213,13 @@ function render() {
               ? ''
               : '<p class="info-banner report-sync-hint">이 주소에서는 제출이 이 기기·브라우저에만 저장됩니다. 수업 전체 공유는 배포 URL 또는 선생님 PC의 개발 서버(같은 Wi‑Fi)를 사용하세요.</p>'
           }
-          <button type="button" class="btn btn--outline-blue btn--block submit-teacher-btn">교사 Dashboard에 제출</button>
+          <button type="button" class="btn btn--block submit-teacher-btn">교사 Dashboard에 제출</button>
           <p class="submit-teacher-msg" hidden></p>
           <p class="teacher-feedback-status info-banner info-banner--soft" aria-live="polite"></p>
           <hr class="divider divider--tight" />
           <h2 class="report-card__title"><span class="report-card__num">04</span>보고서 출력</h2>
 <p class="report-card__p">입력·업로드한 내용이 포함된 최종 실습일지를 생성하고 PDF를 내보냅니다.</p>
-          <button type="button" class="btn btn--secondary btn--block pdf-btn">최종 실습일지 생성(PDF 내보내기)</button>
+          <button type="button" class="btn btn--block pdf-btn">최종 실습일지 생성(PDF 내보내기)</button>
           <p class="pdf-msg" hidden></p>
         </section>
       </div>

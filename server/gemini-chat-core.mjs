@@ -74,13 +74,17 @@ export async function prepareGeminiChatRequest(body, env) {
   const isTeacherDraftJob =
     aiTask === 'teacher-draft' ||
     /교사용 개별 피드백 초안/i.test(ctx)
+  const isMaterialsJob = aiTask === 'materials-json'
   const isReportJsonJob =
     aiTask === 'report-json' ||
-    (/최종 보고서|SWOT|종합 피드백/i.test(ctx) && !isTeacherDraftJob)
-  const isReportJob = isReportJsonJob || isTeacherDraftJob
+    (/최종 보고서|SWOT|종합 피드백/i.test(ctx) &&
+      !isTeacherDraftJob &&
+      !isMaterialsJob)
+  const isReportJob = isReportJsonJob || isTeacherDraftJob || isMaterialsJob
   const isChatJob = !isReportJob
   /** 교사 피드백 초안: Pro·이어쓰기 대신 Flash 단발 응답 (Vercel 타임아웃 회피) */
-  const preferFlashEffective = preferFlashBody === true || isTeacherDraftJob
+  const preferFlashEffective =
+    preferFlashBody === true || isTeacherDraftJob || isMaterialsJob
 
   const explicitModel = normalizeModel(
     env.GEMINI_MODEL || env.GOOGLE_MODEL || '',
@@ -173,7 +177,9 @@ export async function prepareGeminiChatRequest(body, env) {
     )
 
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || '').trim())
-  const defaultMaxTokens = isReportJsonJob
+  const defaultMaxTokens = isMaterialsJob
+    ? 1024
+    : isReportJsonJob
     ? useProPrimary
       ? 4096
       : 3072
@@ -206,8 +212,9 @@ export async function prepareGeminiChatRequest(body, env) {
         ? modelCandidates.slice(0, useProPrimary ? 3 : 2)
         : modelCandidates
 
-  const maxContinues =
-    syncProTight && isChatJob
+  const maxContinues = isMaterialsJob
+    ? 0
+    : syncProTight && isChatJob
       ? 0
       : isTeacherDraftJob
         ? 0
@@ -243,7 +250,9 @@ export async function prepareGeminiChatRequest(body, env) {
     Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5000
       ? Math.floor(fetchTimeoutParsed)
       : isServerlessDeploy
-        ? isTeacherDraftJob
+        ? isMaterialsJob
+          ? 48_000
+          : isTeacherDraftJob
           ? 28_000
           : isReportJsonJob
             ? 57_000
@@ -317,7 +326,12 @@ export async function prepareGeminiChatRequest(body, env) {
 목표: 학습자가 실습 중 질문하고, 회로도·실습 사진을 근거로 정확한 피드백을 받도록 돕습니다.
 
 ${
-    isReportJsonJob
+    isMaterialsJob
+      ? `【재료 수량 JSON】
+- 사용자 지시의 재료 키만 숫자로 채운 JSON 객체 하나만 출력합니다.
+- 설명, 마크다운, 코드펜스 금지.
+- 도면에 근거가 없으면 0입니다. 보이지 않는 기기를 만들지 마세요.`
+      : isReportJsonJob
       ? `【보고서 JSON 작업】
 - 사용자 지시대로 **유효한 JSON만** 출력합니다(설명·마크다운·\`\`\` 없음).
 - 키 summary, swot {s,w,o,t} 를 채웁니다.
@@ -353,7 +367,11 @@ ${
 안전: 감전·단락·과열 가능성이 있으면 맨 앞에 전원 차단·LOCKOUT을 안내합니다.
 
 ${
-    isReportJsonJob
+    isMaterialsJob
+      ? hasImages
+        ? `첨부된 회로도만 보고 재료 수량을 채우세요. 도면에 없는 항목은 0입니다.`
+        : `회로도 이미지가 없습니다. counts의 모든 수량을 0으로 두고 note에 이미지 없음만 적으세요.`
+      : isReportJsonJob
       ? hasImages
         ? `첨부 이미지·대화·자기평가를 교차 확인해 JSON의 summary·swot를 채우세요.`
         : `이미지 없음: 대화·자기평가·SWOT 초안만으로 JSON을 채우세요.`
@@ -428,12 +446,14 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
         .filter(Boolean)
         .join(', ')
       const qBlock =
-        isReportJsonJob || isTeacherDraftJob
+        isReportJsonJob || isTeacherDraftJob || isMaterialsJob
           ? `【작업 지시】\n${lastUserQuestion || '(지시문 참고)'}`
           : lastUserQuestion
             ? `【이번 학생 질문 — 이것에만 답할 것】\n${lastUserQuestion}`
             : '【이번 학생 질문】 (텍스트 없음 — 이미지 기준으로 안내)'
-      const lengthHint = isReportJsonJob
+      const lengthHint = isMaterialsJob
+        ? 'JSON 객체 하나만. counts의 키를 모두 숫자로. 설명 금지.'
+        : isReportJsonJob
         ? 'JSON만. summary 3~5문장, swot 각 1~2문장. 한 번에 완전한 JSON.'
         : isTeacherDraftJob
           ? '짧은 교사 피드백 초안(150~280자)만 작성하세요.'
@@ -475,6 +495,7 @@ ${practiceExtra ? `\n${practiceExtra}` : ''}`
       wantsDetail,
       isReportJsonJob,
       isTeacherDraftJob,
+      isMaterialsJob,
       proOnly,
       preferOneshot,
       isServerlessDeploy,
@@ -835,6 +856,7 @@ export async function runGeminiChatProxy(body, env) {
       out.trim() &&
       !isReportJsonJob &&
       !isChatJob &&
+      !prep.isMaterialsJob &&
       skipRefineBody !== true &&
       hasImages
     if (refineShouldRun) {
@@ -1012,7 +1034,7 @@ function needsContinueForPrep(finishReason, text, prep) {
   if (/MAX_TOKENS/i.test(String(finishReason || ''))) return true
   // 교사 초안은 짧게 끝나도 정상 — 채팅용 잘림 판정으로 이어쓰기 하면 빈 응답·타임아웃이 날 수 있음
   if (prep?.isTeacherDraftJob) return false
-  if (prep?.isReportJsonJob) return looksTruncatedJson(text)
+  if (prep?.isMaterialsJob || prep?.isReportJsonJob) return looksTruncatedJson(text)
   if (prep?.isChatJob) {
     return looksTruncatedText(text, true)
   }
@@ -1359,6 +1381,34 @@ export async function runGeminiChatStreamToPush(body, env, push) {
   let lastMsg = 'AI가 답변을 만들지 못했습니다.'
 
   try {
+    if (prep.isMaterialsJob) {
+      clearInterval(pingTimer)
+      push({ event: 'status', message: '도면에서 재료를 집계하는 중…' })
+      const materialModels = [
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        ...prep.modelCandidatesRun,
+      ].filter((m, i, a) => a.indexOf(m) === i)
+      for (const model of materialModels.slice(0, 3)) {
+        try {
+          const hit = await geminiGenerateOnce(prep, model, prep.contents)
+          if (hit.ok && String(hit.text || '').trim()) {
+            push({
+              event: 'done',
+              text: String(hit.text).trim(),
+              model,
+            })
+            return
+          }
+          lastMsg = hit.message || lastMsg
+        } catch (e) {
+          lastMsg = e instanceof Error ? e.message : String(e)
+        }
+      }
+      await runGeminiChatBufferedFallback(body, env, push)
+      return
+    }
+
     if (prep.isReportJsonJob) {
       clearInterval(pingTimer)
       await runGeminiChatBufferedFallback(body, env, push)

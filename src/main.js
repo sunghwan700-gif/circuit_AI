@@ -145,7 +145,16 @@ const state = {
   /** @type {{ swot: { s: string, w: string, o: string, t: string }, selfEval: string, aiSummary?: string } | null} */
   journalSnapshot: null,
   messages: [],
+  /** 회로도에서 읽은 재료 수량. materialCounts 형식은 바꾸지 않습니다. */
+  materialRead: {
+    status: 'idle',
+    message: '',
+    note: '',
+    token: 0,
+  },
 }
+
+let materialReadToken = 0
 
 function escapeHtml(s) {
   const div = document.createElement('div')
@@ -625,6 +634,221 @@ function setFile(kind, file) {
     d.circuitImg = file
     d.circuitPreviewUrl = file ? URL.createObjectURL(file) : null
   }
+}
+
+function materialsCountPrompt() {
+  const keys = MATERIAL_ITEMS.map((name) => `    "${name}": 0`).join(',\n')
+  const subject = String(state.data.subject || '').trim() || '미선택'
+  return `첨부된 회로 도면만 보고, 실습에 필요한 재료 수량을 세세요.
+실습 과목: ${subject}
+
+출력은 JSON 객체 하나만. 설명·마크다운·코드펜스 금지.
+형식:
+{
+  "counts": {
+${keys}
+  },
+  "note": "무엇을 몇 개로 봤는지 40자 이내"
+}
+
+규칙:
+- counts의 키 12개를 모두 숫자로 채웁니다. 도면에 없거나 기호로 특정할 수 없으면 0. 추측으로 채우지 마세요.
+- MCCB, NFB, 배선용차단기 기호 1개 = MCCB 1. 누전차단기(ELB, ELCB)는 MCCB가 아닙니다.
+- 퓨즈 기호 1개 = 퓨즈홀더 1.
+- 단자대는 핀 수가 보일 때만. 4핀·4극·4P = 4핀 단자대, 10핀·10극·10P = 10핀 단자대. 핀 수가 없으면 둘 다 0.
+- 릴레이·타이머 베이스는 핀 수나 형명이 보일 때만.
+  8핀·8P·MY2·LY2·HH52 = 8핀 베이스.
+  12핀·12P = 12핀 베이스.
+  14핀·14P·MY4·LY4·HH54 = 14핀 베이스.
+  과목이 철도전기신호기능사이거나 도면에 철도·신호용이라고 적힌 8핀만 8핀 베이스(철도전기용)으로 넣고, 일반 8핀 베이스와 중복하지 마세요.
+  핀 수가 없는 코일 기호만으로는 베이스를 0으로 둡니다. 전자접촉기(MC)는 베이스가 아닙니다.
+- 컨트롤 박스: 버튼·셀렉터·표시등만 셉니다. 릴레이·타이머·접촉기·차단기는 빼세요.
+  함·조작함·점선 상자 안이면 그 안의 개수로 1구·2구·3구를 정합니다. 4개 이상이면 3구를 먼저 쓰고 나머지는 2구 또는 1구로 나눕니다.
+  함 윤곽이 없고 기호만 있으면 기호 1개당 1구 컨트롤 박스 1개입니다.
+- 팔각박스는 8각·팔각·OCT·8각 정션 표기가 있을 때만 셉니다.
+- 전선, 단자 나사, 전원, 전선 가닥 수는 세지 마세요.`
+}
+
+function countsFromMaterialsJson(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const src =
+    parsed.counts && typeof parsed.counts === 'object' && !Array.isArray(parsed.counts)
+      ? parsed.counts
+      : parsed
+  const out = defaultMaterialCounts()
+  let recognized = 0
+  for (const name of MATERIAL_ITEMS) {
+    if (src[name] == null || src[name] === '') continue
+    const n = Number(src[name])
+    if (!Number.isFinite(n)) continue
+    out[name] = Math.max(0, Math.min(99, Math.round(n)))
+    recognized += 1
+  }
+  if (recognized < MATERIAL_ITEMS.length) return null
+  const note = String(parsed.note || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160)
+  return { counts: out, note }
+}
+
+function beginMaterialRead(file) {
+  materialReadToken += 1
+  const token = materialReadToken
+  state.data.materialCounts = defaultMaterialCounts()
+  state.materialRead = {
+    status: 'reading',
+    message: '도면에서 재료를 읽고 있습니다…',
+    note: '',
+    token,
+  }
+  return { token, file }
+}
+
+function cancelMaterialRead() {
+  materialReadToken += 1
+  state.data.materialCounts = defaultMaterialCounts()
+  state.materialRead = {
+    status: 'idle',
+    message: '',
+    note: '',
+    token: materialReadToken,
+  }
+}
+
+function materialReadView() {
+  const st = state.materialRead?.status || 'idle'
+  const note = String(state.materialRead?.note || '').trim()
+  if (st === 'reading') {
+    return {
+      cls: 'materials-status materials-status--reading',
+      text: '도면에서 재료를 읽고 있습니다…',
+      note: '',
+      retry: false,
+    }
+  }
+  if (st === 'ready') {
+    const counts = state.data.materialCounts || {}
+    const any = MATERIAL_ITEMS.some((name) => Number(counts[name]) > 0)
+    return {
+      cls: 'materials-status materials-status--ready',
+      text: any
+        ? '도면에서 읽은 수량입니다.'
+        : '도면에서 해당 재료를 찾지 못해 수량을 0으로 두었습니다.',
+      note,
+      retry: Boolean(state.data.circuitImg),
+    }
+  }
+  if (st === 'error') {
+    return {
+      cls: 'materials-status materials-status--error',
+      text:
+        state.materialRead?.message ||
+        '도면에서 재료를 읽지 못했습니다. 다시 읽어 주세요.',
+      note: '',
+      retry: Boolean(state.data.circuitImg),
+    }
+  }
+  return {
+    cls: 'materials-status',
+    text: '회로 도면을 올리면 아래 수량이 자동으로 채워집니다.',
+    note: '',
+    retry: false,
+  }
+}
+
+function applyMaterialsPanel(root) {
+  const panel = root?.classList?.contains('panel--prepare')
+    ? root
+    : root?.querySelector?.('.panel--prepare') ||
+      document.querySelector('.panel--prepare')
+  if (!panel) return
+  const view = materialReadView()
+  const status = panel.querySelector('.materials-status')
+  if (status) {
+    status.className = view.cls
+    status.innerHTML = `
+      <p class="materials-status__text">${escapeHtml(view.text)}</p>
+      ${view.note ? `<p class="materials-status__note">${escapeHtml(view.note)}</p>` : ''}
+      ${
+        view.retry
+          ? '<button type="button" class="btn btn--outline-blue btn--sm materials-reread">다시 읽기</button>'
+          : ''
+      }
+    `
+    status.querySelector('.materials-reread')?.addEventListener('click', () => {
+      const file = state.data.circuitImg
+      if (!file || state.materialRead?.status === 'reading') return
+      const job = beginMaterialRead(file)
+      applyMaterialsPanel(panel)
+      void runMaterialRead(job.file, job.token)
+    })
+  }
+  const st = state.materialRead?.status || 'idle'
+  panel.querySelectorAll('.materials-qty').forEach((el) => {
+    const name = el.dataset.material || ''
+    const n = Math.max(0, Number(state.data.materialCounts?.[name]) || 0)
+    const item = el.closest('.materials-item')
+    el.classList.remove('materials-qty--pending', 'materials-qty--zero')
+    item?.classList.remove('materials-item--hit')
+    if (st === 'reading') {
+      el.textContent = '…'
+      el.classList.add('materials-qty--pending')
+    } else if (st === 'ready') {
+      el.textContent = String(n)
+      if (n > 0) item?.classList.add('materials-item--hit')
+      else el.classList.add('materials-qty--zero')
+    } else {
+      el.textContent = '—'
+      el.classList.add('materials-qty--pending')
+    }
+  })
+}
+
+async function runMaterialRead(file, token) {
+  try {
+    const tight = isDeployTight()
+    const dataUrl = await fileToCompressedJpegDataUrl(
+      file,
+      tight ? 1408 : 1800,
+      tight ? 0.8 : 0.86,
+    )
+    if (token !== materialReadToken) return
+    const text = await sendOpenAiChat(
+      [{ role: 'user', content: materialsCountPrompt() }],
+      '회로도 재료 수량 집계',
+      [{ label: '회로도', dataUrl }],
+      {
+        aiTask: 'materials-json',
+        hasImages: true,
+        preferFlash: true,
+        maxAttempts: 2,
+      },
+    )
+    if (token !== materialReadToken) return
+    const got = countsFromMaterialsJson(tryParseJsonLoose(text))
+    if (!got) {
+      throw new Error('도면에서 재료 수량을 읽지 못했습니다. 다시 읽어 주세요.')
+    }
+    state.data.materialCounts = got.counts
+    state.materialRead = {
+      status: 'ready',
+      message: '',
+      note: got.note,
+      token,
+    }
+  } catch (e) {
+    if (token !== materialReadToken) return
+    state.data.materialCounts = defaultMaterialCounts()
+    state.materialRead = {
+      status: 'error',
+      message: normalizeChatFetchError(e),
+      note: '',
+      token,
+    }
+  }
+  if (token !== materialReadToken) return
+  applyMaterialsPanel()
 }
 
 function clearFiles(kind) {
@@ -1540,7 +1764,11 @@ function buildPracticeContextForAi() {
   }
 
   return `실습 데이터 요약:
-- 재료(수량 입력 상위): ${materialsTop || '(없음)'}
+- 재료(도면에서 읽은 수량): ${
+    state.materialRead?.status === 'reading'
+      ? '(도면에서 집계 중)'
+      : materialsTop || '(없음)'
+  }
 - 업로드 수: 회로도 ${imgs.circuit}장, 진행 ${imgs.process}장, 최종 ${imgs.final}장
 - 자기평가(있다면 참고): ${String(d.selfEval || '').trim() || '(없음)'}
 `
@@ -1893,20 +2121,22 @@ function render() {
       <div class="panel panel--main panel--prepare">
         <p class="panel__step">Step 1</p>
         <h1 class="step-title">실습 준비</h1>
-        <p class="step-lede">사용 재료와 회로 도면을 남겨 두면 이후 단계와 AI 피드백에 참고됩니다.</p>
+        <p class="step-lede">회로 도면을 올리면 사용 재료가 자동으로 채워지고, 이후 단계와 AI 피드백에 참고됩니다.</p>
         <div class="prepare-narrow">
-          <label class="field field--block"><span class="field__label">오늘 사용할 재료</span>
-            <div class="materials-list" role="group" aria-label="사용 재료 수량 입력">
+          <div class="field field--block">
+            <span class="field__label">오늘 사용할 재료</span>
+            <div class="materials-status" role="status"></div>
+            <div class="materials-list" role="group" aria-label="도면에서 읽은 사용 재료 수량">
               ${MATERIAL_ITEMS.map(
                 (name) => `
                 <div class="materials-item">
                   <span class="materials-name">${escapeHtml(name)}</span>
-                  <input type="number" inputmode="numeric" min="0" max="999" step="1" class="input materials-qty" data-material="${escapeHtml(name)}" />
+                  <span class="materials-qty" data-material="${escapeHtml(name)}">—</span>
                 </div>
               `,
               ).join('')}
             </div>
-          </label>
+          </div>
           <h2 class="section-title section-title--upload">회로 도면 업로드</h2>
           <label class="file-drop">
             <input type="file" accept="image/png,image/jpeg,image/jpg" class="file-circuit file-input-native" />
@@ -1926,24 +2156,22 @@ function render() {
         </div>
       </div>
     `
-    const counts = state.data.materialCounts || (state.data.materialCounts = defaultMaterialCounts())
-    mainCol.querySelectorAll('.materials-qty').forEach((el) => {
-      const key = el.dataset.material
-      el.value = String(Math.max(0, Number(counts?.[key] ?? 0) || 0))
-      el.addEventListener('input', () => {
-        const n = Math.max(0, Math.min(999, Number(el.value) || 0))
-        el.value = String(n)
-        state.data.materialCounts[key] = n
-      })
-    })
+    applyMaterialsPanel(mainCol)
     mainCol.querySelector('.file-circuit').addEventListener('change', (e) => {
-      const f = e.target.files?.[0]
-      setFile('circuit', f || null)
-      render()
+      const f = e.target.files?.[0] || null
+      setFile('circuit', f)
+      if (f) {
+        const job = beginMaterialRead(f)
+        render()
+        void runMaterialRead(job.file, job.token)
+      } else {
+        cancelMaterialRead()
+        render()
+      }
     })
     mainCol.querySelector('.del-circuit').addEventListener('click', () => {
       setFile('circuit', null)
-      mainCol.querySelector('.file-circuit').value = ''
+      cancelMaterialRead()
       render()
     })
     const prev = mainCol.querySelector('.circuit-preview')
@@ -2378,6 +2606,13 @@ function render() {
       state.page = 1
       state.messages = []
       state.journalSnapshot = null
+      materialReadToken += 1
+      state.materialRead = {
+        status: 'idle',
+        message: '',
+        note: '',
+        token: materialReadToken,
+      }
       state.session = { startedAt: null, finalUploadedAt: null, teacherSubmittedId: null }
       state.data = {
         subject: '',

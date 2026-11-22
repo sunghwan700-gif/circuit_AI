@@ -49,10 +49,11 @@ async function prepareGeminiChatRequest(body, env) {
   const ctx = String(contextDescription || "");
   const aiTask = String(aiTaskBody || "").trim().toLowerCase();
   const isTeacherDraftJob = aiTask === "teacher-draft" || /교사용 개별 피드백 초안/i.test(ctx);
-  const isReportJsonJob = aiTask === "report-json" || /최종 보고서|SWOT|종합 피드백/i.test(ctx) && !isTeacherDraftJob;
-  const isReportJob = isReportJsonJob || isTeacherDraftJob;
+  const isMaterialsJob = aiTask === "materials-json";
+  const isReportJsonJob = aiTask === "report-json" || /최종 보고서|SWOT|종합 피드백/i.test(ctx) && !isTeacherDraftJob && !isMaterialsJob;
+  const isReportJob = isReportJsonJob || isTeacherDraftJob || isMaterialsJob;
   const isChatJob = !isReportJob;
-  const preferFlashEffective = preferFlashBody === true || isTeacherDraftJob;
+  const preferFlashEffective = preferFlashBody === true || isTeacherDraftJob || isMaterialsJob;
   const explicitModel = normalizeModel(
     env.GEMINI_MODEL || env.GOOGLE_MODEL || ""
   );
@@ -116,13 +117,13 @@ async function prepareGeminiChatRequest(body, env) {
 ${contextDescription}`
   );
   const tokensParsed = Number(String(env.GEMINI_MAX_OUTPUT_TOKENS || "").trim());
-  const defaultMaxTokens = isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? 2048 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
+  const defaultMaxTokens = isMaterialsJob ? 1024 : isReportJsonJob ? useProPrimary ? 4096 : 3072 : isTeacherDraftJob ? 2048 : useProPrimary ? syncProTight ? isChatJob ? 3072 : 2560 : isChatJob ? wantsDetail ? 4096 : 3072 : 2560 : serverlessCompact ? 3584 : 6144;
   const maxOutputTokens = Number.isFinite(tokensParsed) && tokensParsed >= 512 && tokensParsed <= 8192 ? Math.floor(tokensParsed) : defaultMaxTokens;
   const modelCandidatesRun = proOnly ? modelCandidates.slice(0, 1) : serverlessCompact && !isBgJob ? modelCandidates.slice(0, useProPrimary ? 3 : 2) : modelCandidates;
-  const maxContinues = syncProTight && isChatJob ? 0 : isTeacherDraftJob ? 0 : isReportJsonJob ? isServerlessDeploy ? 3 : 4 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 2 : useProPrimary ? 4 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
+  const maxContinues = isMaterialsJob ? 0 : syncProTight && isChatJob ? 0 : isTeacherDraftJob ? 0 : isReportJsonJob ? isServerlessDeploy ? 3 : 4 : isBgJob && isChatJob ? 2 : isChatJob ? isServerlessDeploy ? 2 : useProPrimary ? 4 : 2 : useProPrimary ? syncProTight ? 0 : 3 : serverlessCompact ? 2 : 4;
   const retryDelaysMs = isBgJob ? [700, 1500, 3e3, 5e3, 8e3] : syncProTight ? [300, 700, 1200] : serverlessCompact ? [400, 900, 1800] : [250, 750, 1500, 3e3];
   const fetchTimeoutParsed = Number(String(env.GEMINI_FETCH_TIMEOUT_MS || "").trim());
-  const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? isTeacherDraftJob ? 28e3 : isReportJsonJob ? 57e3 : syncProTight ? 23e3 : 52e3 : 12e4;
+  const geminiFetchTimeoutMs = Number.isFinite(fetchTimeoutParsed) && fetchTimeoutParsed >= 5e3 ? Math.floor(fetchTimeoutParsed) : isServerlessDeploy ? isMaterialsJob ? 48e3 : isTeacherDraftJob ? 28e3 : isReportJsonJob ? 57e3 : syncProTight ? 23e3 : 52e3 : 12e4;
   const preferOneshot = isServerlessDeploy && !isBgJob && String(env.GEMINI_STREAM_CHAT ?? "0").trim() !== "1";
   const imageList = Array.isArray(images) ? images : [];
   const hasImages = imageList.length > 0 || hasImagesBody === true || hasImagesBody === "true";
@@ -170,7 +171,10 @@ ${contextDescription}`
 
 \uBAA9\uD45C: \uD559\uC2B5\uC790\uAC00 \uC2E4\uC2B5 \uC911 \uC9C8\uBB38\uD558\uACE0, \uD68C\uB85C\uB3C4\xB7\uC2E4\uC2B5 \uC0AC\uC9C4\uC744 \uADFC\uAC70\uB85C \uC815\uD655\uD55C \uD53C\uB4DC\uBC31\uC744 \uBC1B\uB3C4\uB85D \uB3D5\uC2B5\uB2C8\uB2E4.
 
-${isReportJsonJob ? `\u3010\uBCF4\uACE0\uC11C JSON \uC791\uC5C5\u3011
+${isMaterialsJob ? `\u3010\uC7AC\uB8CC \uC218\uB7C9 JSON\u3011
+- \uC0AC\uC6A9\uC790 \uC9C0\uC2DC\uC758 \uC7AC\uB8CC \uD0A4\uB9CC \uC22B\uC790\uB85C \uCC44\uC6B4 JSON \uAC1D\uCCB4 \uD558\uB098\uB9CC \uCD9C\uB825\uD569\uB2C8\uB2E4.
+- \uC124\uBA85, \uB9C8\uD06C\uB2E4\uC6B4, \uCF54\uB4DC\uD39C\uC2A4 \uAE08\uC9C0.
+- \uB3C4\uBA74\uC5D0 \uADFC\uAC70\uAC00 \uC5C6\uC73C\uBA74 0\uC785\uB2C8\uB2E4. \uBCF4\uC774\uC9C0 \uC54A\uB294 \uAE30\uAE30\uB97C \uB9CC\uB4E4\uC9C0 \uB9C8\uC138\uC694.` : isReportJsonJob ? `\u3010\uBCF4\uACE0\uC11C JSON \uC791\uC5C5\u3011
 - \uC0AC\uC6A9\uC790 \uC9C0\uC2DC\uB300\uB85C **\uC720\uD6A8\uD55C JSON\uB9CC** \uCD9C\uB825\uD569\uB2C8\uB2E4(\uC124\uBA85\xB7\uB9C8\uD06C\uB2E4\uC6B4\xB7\`\`\` \uC5C6\uC74C).
 - \uD0A4 summary, swot {s,w,o,t} \uB97C \uCC44\uC6C1\uB2C8\uB2E4.
 - Circuit Chatbot \uB300\uD654\xB7\uCCA8\uBD80 \uC774\uBBF8\uC9C0\xB7\uC790\uAE30\uD3C9\uAC00\xB7\uD559\uC2B5\uC790 SWOT \uCD08\uC548\uC744 **\uD568\uAED8 \uC77D\uACE0** \uC77C\uAD00\uB41C \uC885\uD569 \uD53C\uB4DC\uBC31\uC744 \uB9CC\uB4ED\uB2C8\uB2E4. **\uB300\uD654\uAC00 \uC8FC\uC694 \uADFC\uAC70**\uC785\uB2C8\uB2E4. \uB300\uD654\uB97C \uBB34\uC2DC\uD55C \uC77C\uBC18\uB860\xB7\uB3D9\uBB38\uC11C\uB2F5 \uAE08\uC9C0.
@@ -196,7 +200,7 @@ ${isReportJsonJob ? `\u3010\uBCF4\uACE0\uC11C JSON \uC791\uC5C5\u3011
 \uD559\uC2B5\uC790 \uC218\uC900: \uC804\uAE30 \uCD08\uBCF4\uC790\uB3C4 \uC774\uD574\uD560 \uC218 \uC788\uAC8C, \uC804\uBB38 \uC6A9\uC5B4\uB294 \uAD04\uD638\uB85C \uC26C\uC6B4 \uB73B\uC744 \uBD99\uC785\uB2C8\uB2E4.
 \uC548\uC804: \uAC10\uC804\xB7\uB2E8\uB77D\xB7\uACFC\uC5F4 \uAC00\uB2A5\uC131\uC774 \uC788\uC73C\uBA74 \uB9E8 \uC55E\uC5D0 \uC804\uC6D0 \uCC28\uB2E8\xB7LOCKOUT\uC744 \uC548\uB0B4\uD569\uB2C8\uB2E4.
 
-${isReportJsonJob ? hasImages ? `\uCCA8\uBD80 \uC774\uBBF8\uC9C0\xB7\uB300\uD654\xB7\uC790\uAE30\uD3C9\uAC00\uB97C \uAD50\uCC28 \uD655\uC778\uD574 JSON\uC758 summary\xB7swot\uB97C \uCC44\uC6B0\uC138\uC694.` : `\uC774\uBBF8\uC9C0 \uC5C6\uC74C: \uB300\uD654\xB7\uC790\uAE30\uD3C9\uAC00\xB7SWOT \uCD08\uC548\uB9CC\uC73C\uB85C JSON\uC744 \uCC44\uC6B0\uC138\uC694.` : isTeacherDraftJob ? hasImages ? `\uCCA8\uBD80 \uC774\uBBF8\uC9C0\uAC00 \uC788\uC5B4\uB3C4 \uC9E7\uC740 \uCD08\uC548\uB9CC \uC4F0\uC138\uC694. \uC774\uBBF8\uC9C0 \uC138\uBD80\uAE4C\uC9C0 \uAE38\uAC8C \uC4F0\uC9C0 \uB9C8\uC138\uC694.` : `\uD14D\uC2A4\uD2B8 \uBC1C\uCDCC\uB9CC\uC73C\uB85C \uC9E7\uC740 \uCD08\uC548\uC744 \uC4F0\uC138\uC694.` : hasImages && isChatJob ? `\uCCA8\uBD80 \uC774\uBBF8\uC9C0(\uD68C\uB85C\uB3C4\xB7\uC2E4\uC2B5 \uC0AC\uC9C4)\uB294 \uB9C8\uC9C0\uB9C9 \uD559\uC0DD \uC9C8\uBB38\uC5D0 \uB2F5\uD560 \uB54C \uCC38\uACE0\uD558\uC138\uC694.` : !hasImages && isChatJob ? `\uBD84\uC11D\uC6A9 \uC774\uBBF8\uC9C0 \uC5C6\uC74C: \uB2E8\uC790\xB7\uBC30\uC120 \uB2E8\uC815 \uAE08\uC9C0. \uD544\uC694\uD55C \uC0AC\uC9C4 \uC548\uB0B4\uC640 \uC77C\uBC18 \uC548\uC804\uB9CC \uAC1C\uC694\uD615\uC73C\uB85C \uB2F5\uD558\uC138\uC694.` : hasImages && !isChatJob ? `\uC774\uBC88 \uC694\uCCAD\uC5D0 \uD68C\uB85C\uB3C4\xB7\uC2E4\uC2B5 \uC0AC\uC9C4\uC774 \uD3EC\uD568\uB420 \uC218 \uC788\uC2B5\uB2C8\uB2E4.` : `\uBD84\uC11D\uC6A9 \uC774\uBBF8\uC9C0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. \uCD94\uCE21 \uC9C4\uB2E8\xB7\uB2E8\uC790 \uBC88\uD638\uB97C \uC4F0\uC9C0 \uB9C8\uC138\uC694.`}
+${isMaterialsJob ? hasImages ? `\uCCA8\uBD80\uB41C \uD68C\uB85C\uB3C4\uB9CC \uBCF4\uACE0 \uC7AC\uB8CC \uC218\uB7C9\uC744 \uCC44\uC6B0\uC138\uC694. \uB3C4\uBA74\uC5D0 \uC5C6\uB294 \uD56D\uBAA9\uC740 0\uC785\uB2C8\uB2E4.` : `\uD68C\uB85C\uB3C4 \uC774\uBBF8\uC9C0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. counts\uC758 \uBAA8\uB4E0 \uC218\uB7C9\uC744 0\uC73C\uB85C \uB450\uACE0 note\uC5D0 \uC774\uBBF8\uC9C0 \uC5C6\uC74C\uB9CC \uC801\uC73C\uC138\uC694.` : isReportJsonJob ? hasImages ? `\uCCA8\uBD80 \uC774\uBBF8\uC9C0\xB7\uB300\uD654\xB7\uC790\uAE30\uD3C9\uAC00\uB97C \uAD50\uCC28 \uD655\uC778\uD574 JSON\uC758 summary\xB7swot\uB97C \uCC44\uC6B0\uC138\uC694.` : `\uC774\uBBF8\uC9C0 \uC5C6\uC74C: \uB300\uD654\xB7\uC790\uAE30\uD3C9\uAC00\xB7SWOT \uCD08\uC548\uB9CC\uC73C\uB85C JSON\uC744 \uCC44\uC6B0\uC138\uC694.` : isTeacherDraftJob ? hasImages ? `\uCCA8\uBD80 \uC774\uBBF8\uC9C0\uAC00 \uC788\uC5B4\uB3C4 \uC9E7\uC740 \uCD08\uC548\uB9CC \uC4F0\uC138\uC694. \uC774\uBBF8\uC9C0 \uC138\uBD80\uAE4C\uC9C0 \uAE38\uAC8C \uC4F0\uC9C0 \uB9C8\uC138\uC694.` : `\uD14D\uC2A4\uD2B8 \uBC1C\uCDCC\uB9CC\uC73C\uB85C \uC9E7\uC740 \uCD08\uC548\uC744 \uC4F0\uC138\uC694.` : hasImages && isChatJob ? `\uCCA8\uBD80 \uC774\uBBF8\uC9C0(\uD68C\uB85C\uB3C4\xB7\uC2E4\uC2B5 \uC0AC\uC9C4)\uB294 \uB9C8\uC9C0\uB9C9 \uD559\uC0DD \uC9C8\uBB38\uC5D0 \uB2F5\uD560 \uB54C \uCC38\uACE0\uD558\uC138\uC694.` : !hasImages && isChatJob ? `\uBD84\uC11D\uC6A9 \uC774\uBBF8\uC9C0 \uC5C6\uC74C: \uB2E8\uC790\xB7\uBC30\uC120 \uB2E8\uC815 \uAE08\uC9C0. \uD544\uC694\uD55C \uC0AC\uC9C4 \uC548\uB0B4\uC640 \uC77C\uBC18 \uC548\uC804\uB9CC \uAC1C\uC694\uD615\uC73C\uB85C \uB2F5\uD558\uC138\uC694.` : hasImages && !isChatJob ? `\uC774\uBC88 \uC694\uCCAD\uC5D0 \uD68C\uB85C\uB3C4\xB7\uC2E4\uC2B5 \uC0AC\uC9C4\uC774 \uD3EC\uD568\uB420 \uC218 \uC788\uC2B5\uB2C8\uB2E4.` : `\uBD84\uC11D\uC6A9 \uC774\uBBF8\uC9C0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4. \uCD94\uCE21 \uC9C4\uB2E8\xB7\uB2E8\uC790 \uBC88\uD638\uB97C \uC4F0\uC9C0 \uB9C8\uC138\uC694.`}
 
 \uD604\uC7AC \uC2E4\uC2B5 \uB2E8\uACC4: ${contextDescription || ""}
 ${chatExtra ? `
@@ -248,10 +252,10 @@ ${practiceExtra}` : ""}`;
         lastUserIdx = contents.length - 1;
       }
       const attachNote = imageList.map((img) => String(img?.label || "")).filter(Boolean).join(", ");
-      const qBlock = isReportJsonJob || isTeacherDraftJob ? `\u3010\uC791\uC5C5 \uC9C0\uC2DC\u3011
+      const qBlock = isReportJsonJob || isTeacherDraftJob || isMaterialsJob ? `\u3010\uC791\uC5C5 \uC9C0\uC2DC\u3011
 ${lastUserQuestion || "(\uC9C0\uC2DC\uBB38 \uCC38\uACE0)"}` : lastUserQuestion ? `\u3010\uC774\uBC88 \uD559\uC0DD \uC9C8\uBB38 \u2014 \uC774\uAC83\uC5D0\uB9CC \uB2F5\uD560 \uAC83\u3011
 ${lastUserQuestion}` : "\u3010\uC774\uBC88 \uD559\uC0DD \uC9C8\uBB38\u3011 (\uD14D\uC2A4\uD2B8 \uC5C6\uC74C \u2014 \uC774\uBBF8\uC9C0 \uAE30\uC900\uC73C\uB85C \uC548\uB0B4)";
-      const lengthHint = isReportJsonJob ? "JSON\uB9CC. summary 3~5\uBB38\uC7A5, swot \uAC01 1~2\uBB38\uC7A5. \uD55C \uBC88\uC5D0 \uC644\uC804\uD55C JSON." : isTeacherDraftJob ? "\uC9E7\uC740 \uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548(150~280\uC790)\uB9CC \uC791\uC131\uD558\uC138\uC694." : wantsDetail ? "## \uC694\uC57D\xB7\uD575\uC2EC\xB7\uD560 \uC77C\uC744 \uD55C \uBC88\uC5D0 \uC644\uACB0, 500~750\uC790." : "## \uC694\uC57D\xB7\uD575\uC2EC\xB7\uD560 \uC77C\uC744 \uD55C \uBC88\uC5D0 \uC644\uACB0, 350~550\uC790. \uC911\uC694 \uB0B4\uC6A9 \uD3EC\uD568.";
+      const lengthHint = isMaterialsJob ? "JSON \uAC1D\uCCB4 \uD558\uB098\uB9CC. counts\uC758 \uD0A4\uB97C \uBAA8\uB450 \uC22B\uC790\uB85C. \uC124\uBA85 \uAE08\uC9C0." : isReportJsonJob ? "JSON\uB9CC. summary 3~5\uBB38\uC7A5, swot \uAC01 1~2\uBB38\uC7A5. \uD55C \uBC88\uC5D0 \uC644\uC804\uD55C JSON." : isTeacherDraftJob ? "\uC9E7\uC740 \uAD50\uC0AC \uD53C\uB4DC\uBC31 \uCD08\uC548(150~280\uC790)\uB9CC \uC791\uC131\uD558\uC138\uC694." : wantsDetail ? "## \uC694\uC57D\xB7\uD575\uC2EC\xB7\uD560 \uC77C\uC744 \uD55C \uBC88\uC5D0 \uC644\uACB0, 500~750\uC790." : "## \uC694\uC57D\xB7\uD575\uC2EC\xB7\uD560 \uC77C\uC744 \uD55C \uBC88\uC5D0 \uC644\uACB0, 350~550\uC790. \uC911\uC694 \uB0B4\uC6A9 \uD3EC\uD568.";
       contents[lastUserIdx].parts.unshift({
         text: `${qBlock}
 
@@ -288,6 +292,7 @@ ${lengthHint}`
       wantsDetail,
       isReportJsonJob,
       isTeacherDraftJob,
+      isMaterialsJob,
       proOnly,
       preferOneshot,
       isServerlessDeploy
@@ -569,7 +574,7 @@ ${chunk}`.trim();
     const isReportJsonJob = /최종 보고서|SWOT|종합 피드백/i.test(
       String(contextDescription || "")
     );
-    const refineShouldRun = refineEnabled && out && out.trim() && !isReportJsonJob && !isChatJob && skipRefineBody !== true && hasImages;
+    const refineShouldRun = refineEnabled && out && out.trim() && !isReportJsonJob && !isChatJob && !prep.isMaterialsJob && skipRefineBody !== true && hasImages;
     if (refineShouldRun) {
       try {
         const refinePrompt = `\uC544\uB798\uB294 \uB108\uC758 '\uCD08\uC548 \uB2F5\uBCC0'\uC774\uB2E4. \uAC19\uC740 \uC9C8\uBB38/\uC774\uBBF8\uC9C0 \uB9E5\uB77D\uC744 \uC720\uC9C0\uD558\uBA74\uC11C \uCD5C\uC885 \uB2F5\uBCC0\uC744 \uB2E4\uC2DC \uC791\uC131\uD574\uB77C.
@@ -698,7 +703,7 @@ function looksTruncatedText(text, isChatJob = false) {
 function needsContinueForPrep(finishReason, text, prep) {
   if (/MAX_TOKENS/i.test(String(finishReason || ""))) return true;
   if (prep?.isTeacherDraftJob) return false;
-  if (prep?.isReportJsonJob) return looksTruncatedJson(text);
+  if (prep?.isMaterialsJob || prep?.isReportJsonJob) return looksTruncatedJson(text);
   if (prep?.isChatJob) {
     return looksTruncatedText(text, true);
   }
@@ -971,6 +976,33 @@ async function runGeminiChatStreamToPush(body, env, push) {
   const pingTimer = setInterval(() => push({ event: "ping" }), proMode ? 800 : 2e3);
   let lastMsg = "AI\uAC00 \uB2F5\uBCC0\uC744 \uB9CC\uB4E4\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.";
   try {
+    if (prep.isMaterialsJob) {
+      clearInterval(pingTimer);
+      push({ event: "status", message: "\uB3C4\uBA74\uC5D0\uC11C \uC7AC\uB8CC\uB97C \uC9D1\uACC4\uD558\uB294 \uC911\u2026" });
+      const materialModels = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        ...prep.modelCandidatesRun
+      ].filter((m, i, a) => a.indexOf(m) === i);
+      for (const model of materialModels.slice(0, 3)) {
+        try {
+          const hit = await geminiGenerateOnce(prep, model, prep.contents);
+          if (hit.ok && String(hit.text || "").trim()) {
+            push({
+              event: "done",
+              text: String(hit.text).trim(),
+              model
+            });
+            return;
+          }
+          lastMsg = hit.message || lastMsg;
+        } catch (e) {
+          lastMsg = e instanceof Error ? e.message : String(e);
+        }
+      }
+      await runGeminiChatBufferedFallback(body, env, push);
+      return;
+    }
     if (prep.isReportJsonJob) {
       clearInterval(pingTimer);
       await runGeminiChatBufferedFallback(body, env, push);

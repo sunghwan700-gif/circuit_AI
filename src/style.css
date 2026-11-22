@@ -1906,10 +1906,66 @@ code {
   width: min(120px, 40%);
   min-width: 56px;
   flex-shrink: 0;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
   font-size: 22px;
   font-weight: 600;
   text-align: right;
   padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+
+.materials-qty--pending,
+.materials-qty--zero {
+  color: var(--text-muted);
+}
+
+.materials-item--hit {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.materials-item--hit .materials-qty {
+  border-color: var(--accent-border);
+  background: var(--bg-elevated);
+  color: var(--text-h);
+}
+
+.materials-status {
+  margin: 6px 0 10px;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+.materials-status__text,
+.materials-status__note {
+  margin: 0;
+}
+
+.materials-status__note {
+  margin-top: 4px;
+}
+
+.materials-status--ready {
+  color: var(--accent-hover);
+}
+
+.materials-status--error {
+  color: #b42318;
+}
+
+.circuit-page--step .materials-status .materials-reread {
+  width: auto;
+  margin-top: 8px;
+  font-size: 18px;
+  padding: 8px 14px;
 }
 
 .divider {

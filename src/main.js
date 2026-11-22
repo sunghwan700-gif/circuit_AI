@@ -27,6 +27,7 @@ import {
 } from './teacher-storage.js'
 
 const MATERIAL_ITEMS = [
+  '3핀 단자대',
   '4핀 단자대',
   '10핀 단자대',
   '1구 컨트롤 박스',
@@ -38,7 +39,6 @@ const MATERIAL_ITEMS = [
   '14핀 베이스',
   'MCCB',
   '퓨즈홀더',
-  '팔각박스',
 ]
 
 const LAST_SUBMISSION_ID_KEY = 'circuit_last_submission_id_v1'
@@ -639,34 +639,35 @@ function setFile(kind, file) {
 function materialsCountPrompt() {
   const keys = MATERIAL_ITEMS.map((name) => `    "${name}": 0`).join(',\n')
   const subject = String(state.data.subject || '').trim() || '미선택'
-  return `첨부된 회로 도면만 보고, 실습에 필요한 재료 수량을 세세요.
+  const railwaySubject = subject === '철도전기신호기능사'
+  return `첨부된 회로도 또는 배치도만 보고, 실습 재료 수량을 세세요.
 실습 과목: ${subject}
 
 출력은 JSON 객체 하나만. 설명·마크다운·코드펜스 금지.
 형식:
 {
+  "railway": ${railwaySubject ? 'true' : 'false'},
   "counts": {
 ${keys}
   },
-  "note": "무엇을 몇 개로 봤는지 40자 이내"
+  "note": "기호별 집계를 80자 이내"
 }
 
-규칙:
-- counts의 키 12개를 모두 숫자로 채웁니다. 도면에 없거나 기호로 특정할 수 없으면 0. 추측으로 채우지 마세요.
-- MCCB, NFB, 배선용차단기 기호 1개 = MCCB 1. 누전차단기(ELB, ELCB)는 MCCB가 아닙니다.
+베이스·MCCB 규칙(회로도·배치도 공통, 핀 수가 도면에 없어도 적용):
+- 같은 기기 이름(MC, MC1, T1처럼)은 코일과 접점을 합쳐 1대입니다. 접점이 여러 번 나와도 베이스는 1개입니다.
+- EOCR 1대 = 12핀 베이스 1. MC(전자접촉기) 1대 = 12핀 베이스 1. MCCB는 MC가 아닙니다.
+- T, X, R, FR, FLS와 그 외 타이머·계전기·검출기(EOCR, MC 제외) 1대 = 8핀 1. 버튼(PB)·램프(PL)·셀렉터, 전선 교차, 단자 번호는 8핀이 아닙니다.
+- 철도전기신호기능사 도면이면 그 8핀 수량을 8핀 베이스(철도전기용)에만 넣고 8핀 베이스는 0. 다른 과목 도면이면 8핀 베이스에만 넣고 8핀 베이스(철도전기용)는 0. 두 칸에 나누지 마세요.
+- railway는 도면이 철도전기신호기능사 도면일 때만 true. 지금 과목이 철도전기신호기능사이면 true.
+- 도면에 "MCCB생략" 또는 "MCCB 생략"이 있으면 MCCB는 0입니다. 그 문구가 없고 MCCB·배선용차단기 기호가 있을 때만 기호 1개당 MCCB 1. 누전차단기(ELB, ELCB)는 MCCB가 아닙니다.
+- 14핀 베이스는 도면에 14핀·14P라고 적힌 경우만. 아니면 0.
 - 퓨즈 기호 1개 = 퓨즈홀더 1.
-- 단자대는 핀 수가 보일 때만. 4핀·4극·4P = 4핀 단자대, 10핀·10극·10P = 10핀 단자대. 핀 수가 없으면 둘 다 0.
-- 릴레이·타이머 베이스는 핀 수나 형명이 보일 때만.
-  8핀·8P·MY2·LY2·HH52 = 8핀 베이스.
-  12핀·12P = 12핀 베이스.
-  14핀·14P·MY4·LY4·HH54 = 14핀 베이스.
-  과목이 철도전기신호기능사이거나 도면에 철도·신호용이라고 적힌 8핀만 8핀 베이스(철도전기용)으로 넣고, 일반 8핀 베이스와 중복하지 마세요.
-  핀 수가 없는 코일 기호만으로는 베이스를 0으로 둡니다. 전자접촉기(MC)는 베이스가 아닙니다.
+- 단자대는 핀 수가 보일 때만. 3핀·3극·3P = 3핀 단자대, 4핀·4극·4P = 4핀 단자대, 10핀·10극·10P = 10핀 단자대. 핀 수가 없으면 0.
 - 컨트롤 박스: 버튼·셀렉터·표시등만 셉니다. 릴레이·타이머·접촉기·차단기는 빼세요.
   함·조작함·점선 상자 안이면 그 안의 개수로 1구·2구·3구를 정합니다. 4개 이상이면 3구를 먼저 쓰고 나머지는 2구 또는 1구로 나눕니다.
   함 윤곽이 없고 기호만 있으면 기호 1개당 1구 컨트롤 박스 1개입니다.
-- 팔각박스는 8각·팔각·OCT·8각 정션 표기가 있을 때만 셉니다.
-- 전선, 단자 나사, 전원, 전선 가닥 수는 세지 마세요.`
+- 전선, 단자 나사, 전원, 전선 가닥 수는 세지 마세요. 팔각박스는 세지 마세요.
+- counts의 키는 모두 숫자입니다. 해당 기호가 없으면 0.`
 }
 
 function countsFromMaterialsJson(parsed) {
@@ -685,11 +686,27 @@ function countsFromMaterialsJson(parsed) {
     recognized += 1
   }
   if (recognized < MATERIAL_ITEMS.length) return null
+  applyRailwayEightPinRule(out, parsed)
   const note = String(parsed.note || '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 160)
   return { counts: out, note }
+}
+
+function applyRailwayEightPinRule(counts, parsed) {
+  const subject = String(state.data.subject || '').trim()
+  const flagged = parsed?.railway
+  const railway =
+    subject === '철도전기신호기능사' ||
+    flagged === true ||
+    flagged === 'true' ||
+    flagged === 1
+  if (!railway) return
+  const regular = Math.max(0, Number(counts['8핀 베이스']) || 0)
+  const rail = Math.max(0, Number(counts['8핀 베이스(철도전기용)']) || 0)
+  counts['8핀 베이스(철도전기용)'] = Math.min(99, regular + rail)
+  counts['8핀 베이스'] = 0
 }
 
 function beginMaterialRead(file) {

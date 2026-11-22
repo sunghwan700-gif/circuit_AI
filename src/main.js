@@ -134,6 +134,8 @@ const state = {
     dept: '',
     info: '',
     materialCounts: defaultMaterialCounts(),
+    layoutImg: null,
+    layoutPreviewUrl: null,
     circuitImg: null,
     circuitPreviewUrl: null,
     processImgs: [],
@@ -629,18 +631,19 @@ function addFiles(kind, files) {
 
 function setFile(kind, file) {
   const d = state.data
-  if (kind === 'circuit') {
-    revokeIfUrl(d.circuitPreviewUrl)
-    d.circuitImg = file
-    d.circuitPreviewUrl = file ? URL.createObjectURL(file) : null
-  }
+  if (kind !== 'circuit' && kind !== 'layout') return
+  const imgKey = kind === 'circuit' ? 'circuitImg' : 'layoutImg'
+  const urlKey = kind === 'circuit' ? 'circuitPreviewUrl' : 'layoutPreviewUrl'
+  revokeIfUrl(d[urlKey])
+  d[imgKey] = file
+  d[urlKey] = file ? URL.createObjectURL(file) : null
 }
 
 function materialsCountPrompt() {
   const keys = MATERIAL_ITEMS.map((name) => `    "${name}": 0`).join(',\n')
   const subject = String(state.data.subject || '').trim() || '미선택'
   const railwaySubject = subject === '철도전기신호기능사'
-  return `첨부된 회로도 또는 배치도만 보고, 실습 재료 수량을 세세요.
+  return `첨부된 이미지는 배치도입니다. 회로도가 아닙니다. 이 배치도만 보고 실습 재료 수량을 세세요.
 실습 과목: ${subject}
 
 출력은 JSON 객체 하나만. 설명·마크다운·코드펜스 금지.
@@ -718,7 +721,7 @@ function beginMaterialRead(file) {
   state.data.materialCounts = defaultMaterialCounts()
   state.materialRead = {
     status: 'reading',
-    message: '도면에서 재료를 읽고 있습니다…',
+    message: '배치도에서 재료를 읽고 있습니다…',
     note: '',
     token,
   }
@@ -742,7 +745,7 @@ function materialReadView() {
   if (st === 'reading') {
     return {
       cls: 'materials-status materials-status--reading',
-      text: '도면에서 재료를 읽고 있습니다…',
+      text: '배치도에서 재료를 읽고 있습니다…',
       note: '',
       retry: false,
     }
@@ -753,10 +756,10 @@ function materialReadView() {
     return {
       cls: 'materials-status materials-status--ready',
       text: any
-        ? '도면에서 읽은 수량입니다.'
-        : '도면에서 해당 재료를 찾지 못해 수량을 0으로 두었습니다.',
+        ? '배치도에서 집계한 수량입니다. 회로도를 올려도 이 수량은 바뀌지 않습니다.'
+        : '배치도에서 해당 재료를 찾지 못해 수량을 0으로 두었습니다.',
       note,
-      retry: Boolean(state.data.circuitImg),
+      retry: Boolean(state.data.layoutImg),
     }
   }
   if (st === 'error') {
@@ -764,14 +767,14 @@ function materialReadView() {
       cls: 'materials-status materials-status--error',
       text:
         state.materialRead?.message ||
-        '도면에서 재료를 읽지 못했습니다. 다시 읽어 주세요.',
+        '배치도에서 재료를 읽지 못했습니다. 다시 읽어 주세요.',
       note: '',
-      retry: Boolean(state.data.circuitImg),
+      retry: Boolean(state.data.layoutImg),
     }
   }
   return {
     cls: 'materials-status',
-    text: '회로 도면을 올리면 아래 수량이 자동으로 채워집니다.',
+    text: '배치도를 올리면 아래 수량이 집계됩니다. 이후 회로도를 올려도 수량은 바뀌지 않습니다.',
     note: '',
     retry: false,
   }
@@ -797,7 +800,7 @@ function applyMaterialsPanel(root) {
       }
     `
     status.querySelector('.materials-reread')?.addEventListener('click', () => {
-      const file = state.data.circuitImg
+      const file = state.data.layoutImg
       if (!file || state.materialRead?.status === 'reading') return
       const job = beginMaterialRead(file)
       applyMaterialsPanel(panel)
@@ -836,8 +839,8 @@ async function runMaterialRead(file, token) {
     if (token !== materialReadToken) return
     const text = await sendOpenAiChat(
       [{ role: 'user', content: materialsCountPrompt() }],
-      '회로도 재료 수량 집계',
-      [{ label: '회로도', dataUrl }],
+      '배치도 재료 수량 집계',
+      [{ label: '배치도', dataUrl }],
       {
         aiTask: 'materials-json',
         hasImages: true,
@@ -2141,12 +2144,12 @@ function render() {
       <div class="panel panel--main panel--prepare">
         <p class="panel__step">Step 1</p>
         <h1 class="step-title">실습 준비</h1>
-        <p class="step-lede">회로 도면을 올리면 사용 재료가 자동으로 채워지고, 이후 단계와 AI 피드백에 참고됩니다.</p>
+        <p class="step-lede">배치도를 올리면 사용 재료가 집계됩니다. 회로도는 이후 단계와 AI 피드백에 쓰이며, 재료 수량은 바꾸지 않습니다.</p>
         <div class="prepare-narrow">
           <div class="field field--block">
             <span class="field__label">오늘 사용할 재료</span>
             <div class="materials-status" role="status"></div>
-            <div class="materials-list" role="group" aria-label="도면에서 읽은 사용 재료 수량">
+            <div class="materials-list" role="group" aria-label="배치도에서 집계한 사용 재료 수량">
               ${MATERIAL_ITEMS.map(
                 (name) => `
                 <div class="materials-item">
@@ -2157,6 +2160,21 @@ function render() {
               ).join('')}
             </div>
           </div>
+          <h2 class="section-title section-title--upload">배치도 업로드</h2>
+          <label class="file-drop">
+            <input type="file" accept="image/png,image/jpeg,image/jpg" class="file-layout file-input-native" />
+            <span class="file-drop__inner">
+              <span class="file-drop__placeholder">
+                <span class="file-drop__icon" aria-hidden="true"></span>
+                <span class="file-drop__title">배치도를 끌어 놓거나 눌러 선택</span>
+                <span class="file-drop__hint">재료 수량은 이 배치도로만 집계됩니다</span>
+              </span>
+              <div class="preview-wrap layout-preview file-drop__preview"></div>
+            </span>
+          </label>
+          <div class="btn-row btn-row--right">
+            <button type="button" class="btn btn--danger btn--sm del-layout">배치도 삭제</button>
+          </div>
           <h2 class="section-title section-title--upload">회로 도면 업로드</h2>
           <label class="file-drop">
             <input type="file" accept="image/png,image/jpeg,image/jpg" class="file-circuit file-input-native" />
@@ -2164,7 +2182,7 @@ function render() {
               <span class="file-drop__placeholder">
                 <span class="file-drop__icon" aria-hidden="true"></span>
                 <span class="file-drop__title">이미지를 끌어 놓거나 눌러 선택</span>
-                <span class="file-drop__hint">PNG, JPG · 최대 화면에 맞게 미리보기</span>
+                <span class="file-drop__hint">PNG, JPG · 재료 수량은 바꾸지 않습니다</span>
               </span>
               <div class="preview-wrap circuit-preview file-drop__preview"></div>
             </span>
@@ -2177,9 +2195,21 @@ function render() {
       </div>
     `
     applyMaterialsPanel(mainCol)
-    mainCol.querySelector('.file-circuit').addEventListener('change', (e) => {
+    const showPreview = (selector, url, alt) => {
+      const prev = mainCol.querySelector(selector)
+      const drop = prev?.closest('.file-drop')
+      if (!prev) return
+      if (url) {
+        prev.innerHTML = `<img src="${url}" alt="${escapeHtml(alt)}" class="preview-img" />`
+        drop?.classList.add('file-drop--has-preview')
+      } else {
+        prev.innerHTML = ''
+        drop?.classList.remove('file-drop--has-preview')
+      }
+    }
+    mainCol.querySelector('.file-layout').addEventListener('change', (e) => {
       const f = e.target.files?.[0] || null
-      setFile('circuit', f)
+      setFile('layout', f)
       if (f) {
         const job = beginMaterialRead(f)
         render()
@@ -2189,20 +2219,22 @@ function render() {
         render()
       }
     })
-    mainCol.querySelector('.del-circuit').addEventListener('click', () => {
-      setFile('circuit', null)
+    mainCol.querySelector('.del-layout').addEventListener('click', () => {
+      setFile('layout', null)
       cancelMaterialRead()
       render()
     })
-    const prev = mainCol.querySelector('.circuit-preview')
-    const dropCircuit = prev?.closest('.file-drop')
-    if (state.data.circuitPreviewUrl) {
-      prev.innerHTML = `<img src="${state.data.circuitPreviewUrl}" alt="업로드된 회로도" class="preview-img" />`
-      dropCircuit?.classList.add('file-drop--has-preview')
-    } else {
-      prev.innerHTML = ''
-      dropCircuit?.classList.remove('file-drop--has-preview')
-    }
+    mainCol.querySelector('.file-circuit').addEventListener('change', (e) => {
+      const f = e.target.files?.[0] || null
+      setFile('circuit', f)
+      render()
+    })
+    mainCol.querySelector('.del-circuit').addEventListener('click', () => {
+      setFile('circuit', null)
+      render()
+    })
+    showPreview('.layout-preview', state.data.layoutPreviewUrl, '업로드된 배치도')
+    showPreview('.circuit-preview', state.data.circuitPreviewUrl, '업로드된 회로도')
     mainCol.querySelector('.step-next').addEventListener('click', () =>
       movePage(3),
     )
@@ -2640,6 +2672,8 @@ function render() {
         dept: '',
         info: '',
         materialCounts: defaultMaterialCounts(),
+        layoutImg: null,
+        layoutPreviewUrl: null,
         circuitImg: null,
         circuitPreviewUrl: null,
         processImgs: [],

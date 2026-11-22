@@ -2160,35 +2160,41 @@ function render() {
               ).join('')}
             </div>
           </div>
-          <h2 class="section-title section-title--upload">배치도 업로드</h2>
-          <label class="file-drop">
-            <input type="file" accept="image/png,image/jpeg,image/jpg" class="file-layout file-input-native" />
-            <span class="file-drop__inner">
-              <span class="file-drop__placeholder">
-                <span class="file-drop__icon" aria-hidden="true"></span>
-                <span class="file-drop__title">배치도를 끌어 놓거나 눌러 선택</span>
-                <span class="file-drop__hint">재료 수량은 이 배치도로만 집계됩니다</span>
-              </span>
-              <div class="preview-wrap layout-preview file-drop__preview"></div>
-            </span>
-          </label>
-          <div class="btn-row btn-row--right">
-            <button type="button" class="btn btn--danger btn--sm del-layout">배치도 삭제</button>
-          </div>
-          <h2 class="section-title section-title--upload">회로 도면 업로드</h2>
-          <label class="file-drop">
-            <input type="file" accept="image/png,image/jpeg,image/jpg" class="file-circuit file-input-native" />
-            <span class="file-drop__inner">
-              <span class="file-drop__placeholder">
-                <span class="file-drop__icon" aria-hidden="true"></span>
-                <span class="file-drop__title">이미지를 끌어 놓거나 눌러 선택</span>
-                <span class="file-drop__hint">PNG, JPG · 재료 수량은 바꾸지 않습니다</span>
-              </span>
-              <div class="preview-wrap circuit-preview file-drop__preview"></div>
-            </span>
-          </label>
-          <div class="btn-row btn-row--right">
-            <button type="button" class="btn btn--danger btn--sm del-circuit">업로드 삭제</button>
+          <div class="prepare-uploads">
+            <section class="prepare-upload">
+              <h2 class="section-title section-title--upload">배치도 업로드</h2>
+              <label class="file-drop">
+                <input type="file" accept="image/png,image/jpeg,image/jpg" class="file-layout file-input-native" />
+                <span class="file-drop__inner">
+                  <span class="file-drop__placeholder">
+                    <span class="file-drop__icon" aria-hidden="true"></span>
+                    <span class="file-drop__title">배치도를 끌어 놓거나 눌러 선택</span>
+                    <span class="file-drop__hint">재료 수량은 이 배치도로만 집계됩니다</span>
+                  </span>
+                  <div class="preview-wrap layout-preview file-drop__preview"></div>
+                </span>
+              </label>
+              <div class="btn-row btn-row--right">
+                <button type="button" class="btn btn--danger btn--sm del-layout">배치도 삭제</button>
+              </div>
+            </section>
+            <section class="prepare-upload">
+              <h2 class="section-title section-title--upload">회로 도면 업로드</h2>
+              <label class="file-drop">
+                <input type="file" accept="image/png,image/jpeg,image/jpg" class="file-circuit file-input-native" />
+                <span class="file-drop__inner">
+                  <span class="file-drop__placeholder">
+                    <span class="file-drop__icon" aria-hidden="true"></span>
+                    <span class="file-drop__title">이미지를 끌어 놓거나 눌러 선택</span>
+                    <span class="file-drop__hint">PNG, JPG · 재료 수량은 바꾸지 않습니다</span>
+                  </span>
+                  <div class="preview-wrap circuit-preview file-drop__preview"></div>
+                </span>
+              </label>
+              <div class="btn-row btn-row--right">
+                <button type="button" class="btn btn--danger btn--sm del-circuit">업로드 삭제</button>
+              </div>
+            </section>
           </div>
           <button type="button" class="btn btn--primary btn--lg step-next">실습 시작하기</button>
         </div>

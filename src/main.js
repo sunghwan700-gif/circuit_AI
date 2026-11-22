@@ -2175,7 +2175,7 @@ function render() {
                 </span>
               </label>
               <div class="btn-row btn-row--right">
-                <button type="button" class="btn btn--danger btn--sm del-layout">배치도 삭제</button>
+                <button type="button" class="btn btn--danger btn--sm del-layout">업로드 삭제</button>
               </div>
             </section>
             <section class="prepare-upload">
